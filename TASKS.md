@@ -198,6 +198,7 @@ class Game:
 ### ★ Hito de la Ola 2: prueba en Windows (la hacen humanos; el agente prepara la guía)
 - Un amigo con Windows descomprime el ZIP, abre `TF2ReAudio.cmd`, corre `doctor`, importa un WAV en `soldier/medic`, abre TF2 y presiona E.
 - Tú, en partida Casual: `import-wav` + `apply` **mientras juegas**. Anotar si hay tirón, cuánto dura y si se oye la voz nueva. Con eso se decide si el modo automático se ofrece.
+- Comprobar también que `rcon.send()` contra el TF2 real **no** termina en timeout. El cliente detecta el final de la respuesta mandando un paquete vacío y esperando su eco, como hacen los servidores dedicados; si el cliente de TF2 no devuelve ese eco, hay que volver a leer solo el primer paquete de respuesta.
 - **No se pasa a la Ola 3 hasta que esto funcione en Windows.**
 
 ---
