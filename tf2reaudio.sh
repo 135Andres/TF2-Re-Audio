@@ -52,6 +52,8 @@ $(install_hint)
 Then run tf2reaudio.sh again."
 fi
 
-python3 -m tf2reaudio run "$@"
+# No arguments (double-click) = "run"; otherwise pass them through, e.g. "./tf2reaudio.sh doctor".
+[ "$#" -eq 0 ] && set -- run
+python3 -m tf2reaudio "$@"
 rc=$?
 [ "$rc" -eq 0 ] || fail "TF2 Re-Audio stopped with error code $rc. Read the message above."

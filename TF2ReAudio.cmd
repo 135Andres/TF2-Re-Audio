@@ -27,7 +27,8 @@ if not defined PY call :try_python "%RT%\python.exe"
 if not defined PY call :install_runtime
 if not defined PY goto :end_fail
 
-%PY% -m tf2reaudio run %*
+rem No arguments (double-click) = "run"; otherwise pass them through, e.g. "TF2ReAudio.cmd doctor".
+if "%~1"=="" (%PY% -m tf2reaudio run) else (%PY% -m tf2reaudio %*)
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" exit /b 0
 echo.

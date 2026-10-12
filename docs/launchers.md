@@ -2,8 +2,8 @@
 
 | File | System | What it runs |
 |---|---|---|
-| `TF2ReAudio.cmd` | Windows 10/11 (64-bit) | `<python> -m tf2reaudio run [your args]` |
-| `tf2reaudio.sh` | Linux | `python3 -m tf2reaudio run [your args]` |
+| `TF2ReAudio.cmd` | Windows 10/11 (64-bit) | `<python> -m tf2reaudio run` (no args) or `<python> -m tf2reaudio <args>` |
+| `tf2reaudio.sh` | Linux | `python3 -m tf2reaudio run` (no args) or `python3 -m tf2reaudio <args>` |
 
 Both work from a double-click or a terminal, use their own folder as the working folder (so they work from anywhere, including paths with spaces), and pass any extra arguments through. If something fails, they print what to do and wait for a key before the window closes.
 
@@ -84,7 +84,7 @@ Until `run` is implemented, a "good" result ends with `Not implemented yet`, the
 **E. From a terminal**, with the folder from D:
 1. cmd: `cd /d C:\` then `"C:\Users\<you>\Desktop\TF2 Re Audio (test) & co\TF2ReAudio.cmd"`. Expected: the good result. The window must not close, and the prompt returns after a key.
 2. PowerShell: `cd ~` then `& "C:\Users\<you>\Desktop\TF2 Re Audio (test) & co\TF2ReAudio.cmd"`. Expected: the same.
-3. cmd: `TF2ReAudio.cmd --help` from inside the folder. Expected: the help text of `tf2reaudio run`, which shows that arguments are forwarded.
+3. cmd: `TF2ReAudio.cmd --help` from inside the folder. Expected: the help text of `tf2reaudio`, which shows that arguments are forwarded.
 4. After a run, `echo %ERRORLEVEL%` in cmd should print the app's exit code (1 for the stub).
 
 **F. Error cases**
