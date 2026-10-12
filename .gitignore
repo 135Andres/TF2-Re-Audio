@@ -1,0 +1,9 @@
+rcon_password.txt
+__pycache__/
+*.pyc
+dist/
+runtime/
+# local data folders (real data lives in data_dir(), outside the repo)
+data/
+collection/
+disabled_mod/

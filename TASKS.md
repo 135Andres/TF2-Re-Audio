@@ -1,0 +1,299 @@
+# TF2 Re-Audio — Tareas para agentes
+
+Lee `PLAN.md` antes de cualquier tarea. Cada tarea es **dueña** de los archivos que lista y no debe editar los de otra; si necesita un cambio en otro módulo, lo anota en su reporte. Las interfaces de abajo son el contrato entre tareas: se respetan aunque la implementación interna cambie.
+
+## Reglas para todos los agentes
+
+- **Python ≥3.10, solo biblioteca estándar.** Nada de `pip install`.
+- Debe funcionar en **Windows y Linux**: usar `pathlib` siempre, nunca asumir `/`, y fijar `newline`/`encoding="utf-8"` explícitos.
+- Pruebas con `unittest` en `tests/test_<modulo>.py`. Se corren con `python -m unittest` desde la raíz y no deben tocar el TF2 real ni la red. Para eso se usan fixtures y servidores falsos en `127.0.0.1` con puerto 0.
+- Toda escritura de datos persistentes pasa por `util.atomic_write`.
+- Texto visible para el usuario: **en inglés**.
+- Errores esperables (archivo faltante, red caída, juego cerrado) → excepciones propias del módulo con un mensaje claro. Nunca un traceback al usuario.
+- Al terminar, el reporte incluye: qué se hizo, cómo se probó, qué no se probó (sobre todo Windows) y los cambios que necesitas de otras tareas.
+
+## Mapa de dependencias
+
+```
+Ola 0:  T0
+Ola 1:  T1 steam · T2 vpk · T3 rcon · T4 audio · T5 catalog(→T2 fixture) · T6 launchers · T7 tunnel     (paralelo)
+Ola 2:  T8 store(→T4,T5) → T9 game(→T1,T2,T3,T8) → T10 doctor CLI(→T1,T2,T3,T9)
+        ★ Hito: prueba en Windows real + medir snd_restart en partida
+Ola 3:  T11 group(→T8) → T12 sync(→T8,T11,T4,T5) → T13 pruebas de integración de sync
+Ola 4:  T14 servidor local(→todo) → T15 web shell+dashboard → T16 grabadora · T17 asistente · T18 UI de grupo (paralelo)
+        ★ Hito: prueba con 5 personas nuevas
+Ola 5:  T19 empaquetado y release
+```
+
+---
+
+## Ola 0
+
+### T0 — Esqueleto del repositorio
+**Archivos:** `tf2reaudio/__init__.py`, `tf2reaudio/__main__.py`, `tf2reaudio/util.py`, `tests/test_util.py`, `.gitignore`, `AGENTS.md`
+- `git init`. El `.gitignore` excluye `rcon_password.txt`, `__pycache__/`, `dist/` y cualquier carpeta de datos.
+- En `__init__.py`: `__version__ = "0.1.0"` y `PROTOCOL_VERSION = 1`.
+- En `util.py`:
+  - `data_dir() -> Path`: `%APPDATA%\TF2ReAudio` en Windows, `$XDG_DATA_HOME/tf2reaudio` o `~/.local/share/tf2reaudio` en Linux. La crea si no existe.
+  - `atomic_write(path, data: bytes)`: escribe a un temporal en el mismo directorio, hace `fsync` y luego `os.replace`.
+  - `set_low_priority()`: `os.nice(10)` en Linux; `SetPriorityClass(BELOW_NORMAL)` con `ctypes` en Windows. Si falla, no hace nada.
+- En `__main__.py`: un `argparse` con subcomandos vacíos (`run`, `doctor`, `host`) y `--version`.
+- En `AGENTS.md`: copia las "Reglas para todos los agentes".
+- **Aceptación:** `python -m tf2reaudio --version` imprime la versión y `python -m unittest` pasa (incluida una prueba de que `atomic_write` no deja temporales si falla).
+
+---
+
+## Ola 1 (en paralelo)
+
+### T1 — Encontrar y validar TF2 (`steam.py`)
+**Archivos:** `tf2reaudio/steam.py`, `tests/test_steam.py`
+```python
+def find_installs() -> list[Path]          # carpetas "tf" válidas, sin duplicados
+def check_install(tf: Path) -> InstallCheck  # dataclass(ok: bool, problem: str|None, detail: str)
+# problem ∈ {"not_found", "wrong_folder", "vpk_unreadable", "not_writable"}
+```
+- Raíces de Steam en Windows: `HKCU\Software\Valve\Steam\SteamPath` (`winreg`) y `%ProgramFiles(x86)%\Steam`. En Linux: `~/.local/share/Steam`, `~/.steam/steam` y Flatpak (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`).
+- Leer **todas** las bibliotecas de `steamapps/libraryfolders.vdf` (con las barras escapadas `\\`).
+- `check_install` acepta tanto la carpeta `tf` como la raíz `Team Fortress 2` (en ese caso la corrige). Verifica que se pueda abrir el VPK de voces y prueba escribir en `tf/custom` con un archivo temporal que luego borra.
+- **Aceptación:** pruebas con árboles falsos en `tempfile` para cada `problem`, varias bibliotecas, rutas de Windows dentro del VDF y duplicados por symlink (`~/.steam/steam` → `~/.local/share/Steam`).
+
+### T2 — Lector de VPK robusto (`vpk.py`)
+**Archivos:** `tf2reaudio/vpk.py`, `tests/test_vpk.py`, `tests/fixtures/make_vpk.py`, `tests/fixtures/vo_index.txt`
+```python
+class VpkError(Exception)
+class VpkIndex:
+    def __init__(self, dir_vpk: Path)      # parsea el índice; lanza VpkError
+    def names(self) -> list[str]           # "sound/vo/soldier_medic01.mp3"
+    def read(self, name: str) -> bytes     # contenido completo (preload + archivo)
+    def __contains__(self, name) -> bool
+```
+- Soporta las versiones 1 y 2. Corrige los bugs de la auditoría: detectar fin de archivo en cadenas sin terminador y no leer más allá de `tree_size`; un archivo truncado debe lanzar `VpkError`, nunca colgarse.
+- `read`: `archive_index == 0x7FFF` significa que los datos están dentro del propio `_dir.vpk`, después del árbol. Si no, están en `<prefix>_<NNN>.vpk`. Hay que concatenar primero los bytes de *preload*. Se valida contra el CRC32 de la entrada.
+- `make_vpk.py` genera VPKs sintéticos para las pruebas.
+- Genera `vo_index.txt` (un nombre por línea) desde el TF2 real de esta máquina (`~/.local/share/Steam/steamapps/common/Team Fortress 2/tf/tf2_sound_vo_english_dir.vpk`); T5 lo usa como fixture.
+- **Aceptación:** pruebas con VPK v1 y v2, preload, datos en `_dir` y en un archivo externo, truncado en cada sección (debe lanzar `VpkError` en menos de 100 ms) y CRC incorrecto. Prueba manual: leer `sound/vo/soldier_medic01.mp3` real y comprobar que empieza con `ID3`.
+
+### T3 — Cliente RCON robusto (`rcon.py`)
+**Archivos:** `tf2reaudio/rcon.py`, `tests/test_rcon.py`
+```python
+class RconError(Exception); class RconNotRunning(RconError); class RconAuthFailed(RconError)
+def send(command: str, password: str, port: int = 27015, timeout: float = 3.0) -> str
+def launch_options(password: str, port: int = 27015) -> str
+# → "-usercon +ip 127.0.0.1 +hostport 27015 +rcon_password <pw> +net_start"
+```
+- Conecta solo a `127.0.0.1`. Usa una función `_recv_exact(n)` que tolera fragmentos y lanza `RconError` si la conexión se cierra antes de tiempo. Valida que el tamaño del paquete esté entre 10 y 4096+10. Hay que ignorar el `RESPONSE_VALUE` vacío que el servidor manda antes del `AUTH_RESPONSE`.
+- Conexión rechazada o timeout al conectar → `RconNotRunning`. Auth `id == -1` → `RconAuthFailed`.
+- **Aceptación:** servidor falso que manda la cabecera de a 1 byte, cierra a mitad del cuerpo, rechaza la contraseña y nunca responde (timeout). Ningún caso puede colgarse más de `timeout`+1 s.
+
+### T4 — Validación y análisis de WAV (`audio.py`)
+**Archivos:** `tf2reaudio/audio.py`, `tests/test_audio.py`
+```python
+MAX_SECONDS = 10; MAX_BYTES = 1_000_000; RATE = 44100
+class InvalidWav(Exception)               # .reason legible
+@dataclass class WavInfo: duration_s: float; peak: float; rms: float; warnings: list[str]  # "silent", "clipping"
+def inspect_wav(data: bytes) -> WavInfo    # valida y analiza
+```
+- Solo acepta RIFF/WAVE PCM (`fmt` 1), 16 bits, mono, 44100 Hz, `data` no vacío, ≤ `MAX_SECONDS` y ≤ `MAX_BYTES`. Debe recorrer los chunks con cuidado: tolerar `LIST` y otros, el padding impar y rechazar tamaños que mientan sobre el largo real.
+- Avisos: `silent` si RMS < −45 dBFS; `clipping` si más del 0.1 % de las muestras están en ±32767.
+- **Aceptación:** pruebas con WAV válidos, estéreo, 48 kHz, 8 bits, truncados, con chunk `LIST`, silencio y saturación.
+
+### T5 — Catálogo de líneas (`catalog.py`)
+**Archivos:** `tf2reaudio/catalog.py`, `tests/test_catalog.py`
+**Depende de:** `tests/fixtures/vo_index.txt` (T2). Si aún no existe, generarlo con un script temporal leyendo el VPK real.
+```python
+CLASSES = ["scout","soldier","pyro","demoman","heavy","engineer","medic","sniper","spy"]
+@dataclass class Line: id: str; cls: str; label: str; category: str; files: list[str]
+# id: "soldier/medic" (comando con variantes) o "soldier/raw/soldier_jeers03" (archivo suelto)
+# category ∈ {"voice_menu", "pain_death", "domination", "other"}
+def build(names: list[str]) -> Catalog
+class Catalog:
+    def lines(self, cls: str, category: str | None = None) -> list[Line]
+    def line(self, line_id: str) -> Line              # KeyError si no existe
+    def is_vo_path(self, path: str) -> bool            # está en el VPK de voces
+```
+- Tabla curada para el voice menu (los 24 comandos del PLAN) y para pain & death y domination: patrones regex sobre los nombres reales. Hay que **investigar los nombres reales** en `vo_index.txt` (por ejemplo, el comando "Go" puede ser `_go\d+` y "Spy!" `_cloakedspy\d+`). Solo `sound/vo/<class>_*.mp3`; se ignoran `mvm/`, `taunts/`, etc. en las categorías prioritarias, pero aparecen en "other".
+- Cada archivo de clase pertenece a **una sola** línea: los prioritarios a su comando y el resto a una línea `raw`.
+- **Aceptación:** con el fixture real, cada comando del voice menu tiene al menos 1 archivo en cada clase (documenta las excepciones reales; por ejemplo, el Pyro tiene menos variantes). No hay archivos repetidos entre líneas. Hay una prueba que imprime el conteo por clase y categoría.
+
+### T6 — Lanzadores (`TF2ReAudio.cmd`, `tf2reaudio.sh`)
+**Archivos:** `TF2ReAudio.cmd`, `tf2reaudio.sh`, `docs/launchers.md`
+- Funcionan con **doble clic o desde la consola**. Ejecutan `python -m tf2reaudio run` desde la carpeta donde están.
+- **Windows:** busca `py -3` o `python` ≥3.10 (cuidado con el alias falso de la Microsoft Store, que abre la tienda: hay que comprobar la versión). Si no hay, descarga `python-3.12.x-embed-amd64.zip` de python.org, **verifica el SHA-256 fijado** en el script, lo descomprime en `runtime\` junto al lanzador y lo usa. Sin admin, sin winget. Si algo falla, el mensaje dice qué hacer y la ventana espera una tecla antes de cerrarse.
+- **Linux:** usa `python3` ≥3.10. Si no hay, imprime el comando para instalarlo según la distro detectada en `/etc/os-release` (pacman/apt/dnf).
+- **Aceptación:** probado en Linux. En Windows, se documenta en `docs/launchers.md` la prueba manual que hará el amigo en el hito de la Ola 2. Python embeddable no trae `tkinter` ni `pip`; confirmar que no hacen falta.
+
+### T7 — Túnel (`tunnel.py`)
+**Archivos:** `tf2reaudio/tunnel.py`, `tests/test_tunnel.py`
+```python
+class TunnelError(Exception)
+class Tunnel:
+    def __init__(self, local_port: int)
+    def start(self, timeout: float = 30) -> str   # devuelve "https://xxxx.trycloudflare.com"
+    def stop(self)
+    @property running: bool
+def ensure_cloudflared() -> Path                  # descarga una vez a data_dir()/bin, con SHA-256 verificado
+```
+- Elige el binario según SO y arquitectura (windows-amd64.exe, linux-amd64, linux-arm64), con versión fija y hash fijado en el código. Lanza `cloudflared tunnel --url http://127.0.0.1:<port> --no-autoupdate` y lee el link de su salida con una regex. El proceso muere junto con la app; en Windows con `CREATE_NO_WINDOW`.
+- **Aceptación:** la regex se prueba con salidas reales grabadas (fixtures). La descarga y el arranque se prueban a mano en Linux (prueba marcada con `skipUnless(os.environ.get("NET_TESTS"))`).
+
+---
+
+## Ola 2
+
+### T8 — Colección local (`store.py`)
+**Archivos:** `tf2reaudio/store.py`, `tests/test_store.py`
+**Depende de:** T0 (`util`), T4 (`inspect_wav`). Recibe el `Catalog` (T5) por parámetro.
+Implementa el **modelo de datos de PLAN §4** al pie de la letra.
+```python
+ORIGINAL = "ORIGINAL"
+class Store:
+    def __init__(self, root: Path, device_id: str)        # root = data_dir()/collection
+    def add_take(self, line_id, wav: bytes, author_member_id) -> str      # take_id; valida con inspect_wav
+    def set_active(self, line_id, take_id_or_ORIGINAL) -> str             # event_id
+    def undo(self, line_id) -> str | None                                 # reactiva la toma anterior (es un evento nuevo)
+    def active(self, line_id) -> str | None                               # take_id, ORIGINAL o None si nunca se tocó
+    def history(self, line_id) -> list[dict]                              # tomas con autor y fecha, más cuál está activa
+    def conflicts(self) -> list[str]                                      # line_ids
+    def resolve(self, line_id, take_id_or_ORIGINAL) -> str
+    def set_local_override(self, line_id, use_original: bool)             # no se sincroniza
+    def state(self, line_id) -> set[str]                                  # {"pending_share", "pending_apply", ...}
+    def snapshot(self) -> dict ; def merge(self, snapshot: dict) -> list[str]   # devuelve las líneas cambiadas
+    def blob(self, sha) -> bytes ; def missing_blobs(self) -> list[str] ; def put_blob(self, data) -> str
+    def mark_shared(self, ids) ; def mark_applied(self)
+    def export_zip(self, path) ; def import_zip(self, path)               # importar = merge
+```
+- Un `threading.Lock` por instancia. Cada cambio escribe `collection.json` con `atomic_write`, y antes rota `collection.json.bak`. Si al arrancar `collection.json` está corrupto, se carga el `.bak` y se avisa.
+- Reloj Lamport: `max(local, visto) + 1`. Ganador: mayor `(lamport, device_id)`. Conflicto: dos eventos de una línea con el mismo `parent_event_id`, sin un `resolve` posterior.
+- Poda: más de 5 tomas inactivas por línea → se borran las más viejas, **excepto** las de líneas en conflicto.
+- **Aceptación:** pruebas de undo y redo; merge conmutativo e idempotente (A∪B == B∪A, merge dos veces == una vez); conflicto concurrente que conserva ambas tomas; un borrado viejo no resucita; recuperación desde `.bak`; ningún archivo temporal tras simular un fallo a mitad de escritura.
+
+### T9 — Puente con el juego (`game.py`)
+**Archivos:** `tf2reaudio/game.py`, `tests/test_game.py`
+**Depende de:** T1, T2, T3, T5, T8.
+```python
+MOD_DIR = "tf2reaudio"     # tf/custom/tf2reaudio/sound/vo/...
+class Game:
+    def __init__(self, tf_dir: Path, store, catalog, settings)   # settings: rcon password/puerto
+    def sync_files(self) -> int        # escribe/borra en tf/custom solo lo que cambió; devuelve el número de archivos
+    def pending_apply(self) -> int
+    def apply(self) -> str             # snd_restart; "sent" | "not_running" | "auth_failed"
+    def status(self) -> str            # "connected" | "not_running" | "not_configured" | "auth_failed"
+    def mod_folder_is_new(self) -> bool    # la carpeta se creó con TF2 abierto → "Restart TF2 once"
+    def test_mod_present(self) -> bool ; def remove_test_mod(self)
+    def disable(self) ; def enable(self) ; def uninstall(self, delete_collection: bool)
+```
+- Para cada línea activa (respetando el override local) escribe la toma en **cada** archivo de `line.files`, con la misma ruta pero bajo `tf/custom/tf2reaudio/`. Antes de escribir, verifica `catalog.is_vo_path`. Las líneas que vuelven a ORIGINAL se borran. Escribe con `atomic_write` y no toca archivos idénticos (se compara el hash).
+- `disable` mueve la carpeta a `data_dir()/disabled_mod` (no la borra).
+- La contraseña RCON se genera la primera vez y se guarda en `data_dir()/settings.json`.
+- **Aceptación:** pruebas con una carpeta `tf` falsa y un RCON falso (reusar el de T3). Un archivo fuera de `sound/vo` jamás se escribe, ni con datos maliciosos en el store.
+
+### T10 — CLI `doctor` y grabación de prueba
+**Archivos:** `tf2reaudio/__main__.py` (subcomandos `doctor`, `apply`, `import-wav`), `tests/test_cli.py`
+**Depende de:** T1, T2, T3, T9.
+- `doctor`: imprime la versión de Python y de la app, el SO, las instalaciones de TF2 con su `check_install`, si el VPK se puede leer, el estado de RCON, si existe la carpeta del mod o la de prueba, y la ruta de datos. **Nunca** imprime contraseñas ni tokens. Con `--copy` deja el reporte en un archivo de texto.
+- `import-wav <line_id> <archivo.wav>`: agrega la toma, la activa y llama `sync_files`. Con eso se hace la prueba del hito sin web.
+- `apply`: llama `game.apply()` y muestra el resultado en texto claro.
+- **Aceptación:** probado en Linux contra el TF2 real.
+
+### ★ Hito de la Ola 2: prueba en Windows (la hacen humanos; el agente prepara la guía)
+- Un amigo con Windows descomprime el ZIP, abre `TF2ReAudio.cmd`, corre `doctor`, importa un WAV en `soldier/medic`, abre TF2 y presiona E.
+- Tú, en partida Casual: `import-wav` + `apply` **mientras juegas**. Anotar si hay tirón, cuánto dura y si se oye la voz nueva. Con eso se decide si el modo automático se ofrece.
+- **No se pasa a la Ola 3 hasta que esto funcione en Windows.**
+
+---
+
+## Ola 3
+
+### T11 — Grupo, miembros e invitaciones (`group.py`)
+**Archivos:** `tf2reaudio/group.py`, `tests/test_group.py`
+**Depende de:** T8 (usa el mismo patrón de eventos con Lamport y la persistencia atómica).
+```python
+class Group:   # se guarda en data_dir()/group.json; la parte replicable va en el snapshot del store
+    @staticmethod
+    def create(name, my_display_name) -> "Group"         # yo = admin; genera group_id
+    def create_invite(self, ttl_hours=24) -> str           # código legible tipo "TF2-ABCD-EFGH"; solo admin
+    def redeem_invite(self, code, display_name) -> (member_id, device_token)   # lo ejecuta el host
+    def verify_token(self, token) -> member_id | None      # compara sha256(token) con hmac.compare_digest
+    def remove_member(self, member_id) ; def promote(self, member_id)          # solo admin, como eventos
+    def set_suggested_voice(self, cls, member_id)          # el "cast menu", como evento
+    def members(self) -> list[dict] ; def is_admin(self, member_id) -> bool
+    def known_hosts(self) -> list[str] ; def set_host_url(self, url)            # "Update link"
+```
+- Las invitaciones se replican hasheadas; una invitación canjeada es un evento, así que no se puede usar dos veces aunque se canjee en hosts distintos después de sincronizar. **Riesgo aceptado y documentado:** si dos hosts sin sincronizar canjean la misma invitación al mismo tiempo, se aceptan ambos miembros.
+- **Aceptación:** pruebas de crear grupo, invitar, canjear, invitación vencida o reusada, expulsión replicada (después del merge, el token deja de funcionar), y que un no admin no puede invitar ni expulsar.
+
+### T12 — Sincronización: servidor del host y cliente (`sync.py`)
+**Archivos:** `tf2reaudio/sync.py`, `tests/test_sync.py`
+**Depende de:** T4, T5, T8, T11. Usa T7 solo desde `run`/`host`, no en las pruebas.
+- **Servidor** (`http.server.ThreadingHTTPServer` en `127.0.0.1:<puerto>`; el túnel apunta ahí):
+  - `GET /api/hello` → `{group_id, protocol_version, app_version}` (sin auth).
+  - `POST /api/redeem` `{code, display_name}` → `{member_id, token, group snapshot}`. Limitado a 5 intentos por minuto por IP; detrás de Cloudflare se usa el header `CF-Connecting-IP`.
+  - `GET /api/snapshot` (Bearer token, con ETag/`If-None-Match` → 304).
+  - `POST /api/snapshot` → merge del snapshot del cliente. Solo se aceptan tomas y eventos cuyo autor sea el miembro del token.
+  - `GET /api/blob/<sha>` y `PUT /api/blob/<sha>`: validar el hash con el contenido, `inspect_wav` y `MAX_BYTES`. Es idempotente.
+  - `GET /download/TF2ReAudio.zip` (sin auth; sirve el ZIP de T19 si existe).
+  - Un `protocol_version` distinto → `426` con un mensaje "Update the app".
+- **Cliente:** `sync_once(store, group, url, token) -> SyncResult(pushed, pulled, conflicts, error)`. Hace un pull del snapshot, `merge`, baja los blobs que faltan (validando cada uno), sube los propios que falten y hace push del snapshot. `Syncer` es un hilo que corre cada 15 s con backoff exponencial (hasta 2 min) si el host está caído; expone `last_sync`, `status` ("synced" / "host_offline" / "auth_failed" / "update_required") y `pending_share`.
+- Rechaza cualquier línea o ruta que no exista en el catálogo, **también al recibir**.
+- **Aceptación:** pruebas con el servidor en `127.0.0.1` con puerto 0: token inválido → 401; blob con hash falso o WAV inválido → 400; ruta inventada → rechazada; 304 si no hubo cambios; versión incompatible → 426.
+
+### T13 — Pruebas de integración de sincronización
+**Archivos:** `tests/test_integration_sync.py`
+**Depende de:** T12. Simula 3 dispositivos (A host, B y C) en procesos o threads con carpetas temporales:
+1. B graba sin conexión, el host vuelve y B sincroniza: la toma llega a A y a C.
+2. B y C graban la misma línea sin conexión: después de sincronizar, ambas tomas existen en los 3, la línea está en conflicto y el ganador es el mismo en los 3.
+3. A restaura el original para el grupo y C, desactualizado, sincroniza su toma vieja: el original **no** se revierte.
+4. Cambio de host: C se vuelve host con un link nuevo, A y B hacen "Update link" y el `group_id` y la colección se conservan.
+5. Expulsión: A expulsa a C, C intenta sincronizar con A → 401; B sincroniza con A y luego C intenta con B → 401.
+6. Descarga interrumpida (se corta la conexión a mitad de un blob): el siguiente `sync_once` termina bien.
+
+---
+
+## Ola 4 (web)
+
+### T14 — Servidor local y API (`server.py`)
+**Archivos:** `tf2reaudio/server.py`, `tf2reaudio/__main__.py` (subcomandos `run`, `host`), `tests/test_server.py`
+**Depende de:** todo lo anterior.
+- `ThreadingHTTPServer` en `127.0.0.1:8440` (si está ocupado, prueba el siguiente puerto). Guarda el puerto en `data_dir()/instance.json`. **Instancia única:** si ya hay una corriendo (responde `/api/ping`), solo abre el navegador y termina.
+- Rechaza cualquier petición cuyo `Host` no sea `127.0.0.1:<port>` o `localhost:<port>`. Los `POST` exigen `Content-Type: application/json` o el WAV, más un header `X-TF2RA: 1` (contra CSRF).
+- API JSON para la UI: estado general (TF2, grupo, pendientes), clases y líneas con su estado, `GET /api/original/<line>` (MP3 leído del VPK), `GET /api/take/<id>`, `POST /api/take` (WAV), set-active, undo, resolve, override local, apply, settings (ruta de TF2, puerto RCON), launch options, `check-connection`, grupo (crear, invitar, unirse, update link, miembros, cast) y export/import/disable/uninstall.
+- `run`: llama `set_low_priority()`, abre el navegador con `webbrowser` y arranca el `Syncer` si hay grupo. `host`: lo mismo, más el servidor de sincronización de T12 y el túnel de T7, y muestra el link.
+- Sirve `tf2reaudio/web/` como estático, con las imágenes de las clases incluidas en el paquete (sin depender de la wiki).
+- **Aceptación:** pruebas de la API con `urllib` (no hace falta navegador), de la instancia única y del rechazo de `Host` ajeno.
+
+### T15 — Web: shell, dashboard y página de clase
+**Archivos:** `tf2reaudio/web/index.html`, `web/app.js`, `web/style.css`, `web/strings.js`, `web/img/`
+- HTML, CSS y JS sin frameworks ni build, todo local (sin CDNs). Todos los textos van en `strings.js`.
+- Cabecera con los estados de TF2 y del grupo, más "Apply N changes to TF2" (PLAN §7.7).
+- Dashboard: 9 tarjetas con imagen, nombre debajo, "Suggested voice" y progreso por comandos lógicos.
+- Página de clase: "Start with MEDIC!" / "Continue recording", las pestañas, el buscador, "Pending only", "Next line" y "Details" con las variantes. Las acciones de restaurar van con su alcance escrito (PLAN §7.8), más el historial y los conflictos.
+- **Aceptación:** WCAG 2.2 AA (PLAN §7.9), revisada con `playwright-cli` a 200 % de zoom y navegando solo con teclado.
+
+### T16 — Web: grabadora
+**Archivos:** `tf2reaudio/web/recorder.js`, `web/wav.js`
+- El flujo de PLAN §7.6, completo. Selector de micrófono con `enumerateDevices` y medidor de nivel con `AnalyserNode`. Usa `MediaRecorder` → `decodeAudioData` → `OfflineAudioContext` a 44100 Hz mono → WAV PCM16 en `wav.js`. Recorte de silencio con un umbral y opción para desactivarlo. Corta solo a los 10 s.
+- Cada error de `getUserMedia` tiene su mensaje y su solución: `NotAllowedError` (permiso bloqueado, con cómo desbloquearlo), `NotFoundError` (no hay micrófono), `NotReadableError` (otra app lo usa) y `OverconstrainedError`. Nunca se queda esperando para siempre.
+- El micrófono se detiene (`track.stop()`) en cuanto se termina de grabar.
+- **Aceptación:** `wav.js` produce un WAV que `audio.inspect_wav` acepta (prueba con Playwright → POST → 200). Los avisos de silencio y saturación se muestran pero no bloquean el guardado.
+
+### T17 — Web: asistente de primer uso y ajustes
+**Archivos:** `tf2reaudio/web/setup.js`
+- PLAN §7.1–7.3: "Start solo" / "Join friends", TF2 detectado más "Choose another folder" (campo de ruta validado por la API, porque el navegador no puede abrir un selector de carpetas del sistema), los tres errores distinguidos, retirar `tf2reaudio_test`, "Restart TF2 once", "Copy launch options" con su aviso y "Check connection".
+- Ajustes: carpeta de TF2, modo de aplicar (manual/auto, si el hito de la Ola 2 lo permite), export/import y desinstalación en tres niveles.
+
+### T18 — Web: grupo
+**Archivos:** `tf2reaudio/web/group.js`
+- "Create group", "Join a group" (pegar link + código), "Share invite" (copia el link y el código juntos), "Update link", miembros y roles (solo los admins ven expulsar y promover), el "cast menu" (Suggested voice por clase) y "Host for the group" (on/off, muestra el link). El host se explica en una línea: "This PC keeps everyone connected while the app is open."
+- Mensajes de estado del PLAN: "Host offline – N recordings saved here", "Update required" y la invitación vencida.
+
+### ★ Hito de la Ola 4: prueba con usuarios
+Las tareas de AUDITORIA_UX.md §6 con 5 personas que no conocen el proyecto (Windows y Linux). Se corrigen los bloqueos antes de seguir.
+
+---
+
+## Ola 5
+
+### T19 — Empaquetado y release
+**Archivos:** `tools/build_zip.py`, `docs/README.md` (en inglés, para usuarios)
+- Arma `dist/TF2ReAudio-<version>.zip` con `tf2reaudio/`, los lanzadores y el README, **sin** datos, `rcon_password.txt` ni `__pycache__`. Imprime el SHA-256 del ZIP.
+- README: instalar, actualizar (reemplazar la carpeta; los datos viven aparte), desinstalar y qué hacer si algo falla (correr `doctor`).
