@@ -16,7 +16,7 @@ Lee `PLAN.md` antes de cualquier tarea. Cada tarea es **dueña** de los archivos
 
 ```
 Ola 0:  T0
-Ola 1:  T1 steam · T2 vpk · T3 rcon · T4 audio · T5 catalog(→T2 fixture) · T6 launchers · T7 tunnel     (paralelo)
+Ola 1:  T1 steam · T2 vpk · T3 rcon · T4 audio · T5 catalog · T6 launchers · T7 tunnel     (paralelo)
 Ola 2:  T8 store(→T4,T5) → T9 game(→T1,T2,T3,T8) → T10 doctor CLI(→T1,T2,T3,T9)
         ★ Hito: prueba en Windows real + medir snd_restart en partida
 Ola 3:  T11 group(→T8) → T12 sync(→T8,T11,T4,T5) → T13 pruebas de integración de sync
@@ -58,7 +58,7 @@ def check_install(tf: Path) -> InstallCheck  # dataclass(ok: bool, problem: str|
 - **Aceptación:** pruebas con árboles falsos en `tempfile` para cada `problem`, varias bibliotecas, rutas de Windows dentro del VDF y duplicados por symlink (`~/.steam/steam` → `~/.local/share/Steam`).
 
 ### T2 — Lector de VPK robusto (`vpk.py`)
-**Archivos:** `tf2reaudio/vpk.py`, `tests/test_vpk.py`, `tests/fixtures/make_vpk.py`, `tests/fixtures/vo_index.txt`
+**Archivos:** `tf2reaudio/vpk.py`, `tests/test_vpk.py`, `tests/fixtures/make_vpk.py`
 ```python
 class VpkError(Exception)
 class VpkIndex:
@@ -70,7 +70,6 @@ class VpkIndex:
 - Soporta las versiones 1 y 2. Corrige los bugs de la auditoría: detectar fin de archivo en cadenas sin terminador y no leer más allá de `tree_size`; un archivo truncado debe lanzar `VpkError`, nunca colgarse.
 - `read`: `archive_index == 0x7FFF` significa que los datos están dentro del propio `_dir.vpk`, después del árbol. Si no, están en `<prefix>_<NNN>.vpk`. Hay que concatenar primero los bytes de *preload*. Se valida contra el CRC32 de la entrada.
 - `make_vpk.py` genera VPKs sintéticos para las pruebas.
-- Genera `vo_index.txt` (un nombre por línea) desde el TF2 real de esta máquina (`~/.local/share/Steam/steamapps/common/Team Fortress 2/tf/tf2_sound_vo_english_dir.vpk`); T5 lo usa como fixture.
 - **Aceptación:** pruebas con VPK v1 y v2, preload, datos en `_dir` y en un archivo externo, truncado en cada sección (debe lanzar `VpkError` en menos de 100 ms) y CRC incorrecto. Prueba manual: leer `sound/vo/soldier_medic01.mp3` real y comprobar que empieza con `ID3`.
 
 ### T3 — Cliente RCON robusto (`rcon.py`)
@@ -98,8 +97,8 @@ def inspect_wav(data: bytes) -> WavInfo    # valida y analiza
 - **Aceptación:** pruebas con WAV válidos, estéreo, 48 kHz, 8 bits, truncados, con chunk `LIST`, silencio y saturación.
 
 ### T5 — Catálogo de líneas (`catalog.py`)
-**Archivos:** `tf2reaudio/catalog.py`, `tests/test_catalog.py`
-**Depende de:** `tests/fixtures/vo_index.txt` (T2). Si aún no existe, generarlo con un script temporal leyendo el VPK real.
+**Archivos:** `tf2reaudio/catalog.py`, `tests/test_catalog.py`, `tests/fixtures/vo_index.txt`
+**Depende de:** nada en código. Genera `vo_index.txt` (un nombre por línea) leyendo el VPK real de esta máquina (`~/.local/share/Steam/steamapps/common/Team Fortress 2/tf/tf2_sound_vo_english_dir.vpk`) con un script temporal que **no** se commitea.
 ```python
 CLASSES = ["scout","soldier","pyro","demoman","heavy","engineer","medic","sniper","spy"]
 @dataclass class Line: id: str; cls: str; label: str; category: str; files: list[str]
@@ -112,6 +111,7 @@ class Catalog:
     def is_vo_path(self, path: str) -> bool            # está en el VPK de voces
 ```
 - Tabla curada para el voice menu (los 24 comandos del PLAN) y para pain & death y domination: patrones regex sobre los nombres reales. Hay que **investigar los nombres reales** en `vo_index.txt` (por ejemplo, el comando "Go" puede ser `_go\d+` y "Spy!" `_cloakedspy\d+`). Solo `sound/vo/<class>_*.mp3`; se ignoran `mvm/`, `taunts/`, etc. en las categorías prioritarias, pero aparecen en "other".
+- **Referencia externa:** [robbilookatme/tf2-voice-pack-reference](https://github.com/robbilookatme/tf2-voice-pack-reference) tiene CSV y JSON con cada archivo de voz por clase, su transcripción y el "criteria" que lo dispara (p. ej. "did use Help voice command"). **No tiene licencia declarada:** úsalo solo para verificar a mano tus patrones; no copies sus datos al repo. La fuente de verdad en el juego son `scripts/talker/<class>.txt` (dentro de `tf2_misc_dir.vpk`). Las transcripciones no están en los archivos locales del juego (`closecaption_english.txt` solo trae los comentarios de los desarrolladores), así que las etiquetas son curadas a mano.
 - Cada archivo de clase pertenece a **una sola** línea: los prioritarios a su comando y el resto a una línea `raw`.
 - **Aceptación:** con el fixture real, cada comando del voice menu tiene al menos 1 archivo en cada clase (documenta las excepciones reales; por ejemplo, el Pyro tiene menos variantes). No hay archivos repetidos entre líneas. Hay una prueba que imprime el conteo por clase y categoría.
 
