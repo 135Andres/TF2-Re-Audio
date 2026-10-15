@@ -12,18 +12,25 @@ Lee `PLAN.md` antes de cualquier tarea. Cada tarea es **dueña** de los archivos
 - Errores esperables (archivo faltante, red caída, juego cerrado) → excepciones propias del módulo con un mensaje claro. Nunca un traceback al usuario.
 - Al terminar, el reporte incluye: qué se hizo, cómo se probó, qué no se probó (sobre todo Windows) y los cambios que necesitas de otras tareas.
 
-## Mapa de dependencias
+## Mapa de dependencias y orden de entrega
 
 ```
-Ola 0:  T0
-Ola 1:  T1 steam · T2 vpk · T3 rcon · T4 audio · T5 catalog · T6 launchers · T7 tunnel     (paralelo)
-Ola 2:  T8 store(→T4,T5) → T9 game(→T1,T2,T3,T8) → T10 doctor CLI(→T1,T2,T3,T9)
-        ★ Hito: prueba en Windows real + medir snd_restart en partida
-Ola 3:  T11 group(→T8) → T12 sync(→T8,T11,T4,T5) → T13 pruebas de integración de sync
-Ola 4:  T14 servidor local(→todo) → T15 web shell+dashboard → T16 grabadora · T17 asistente · T18 UI de grupo (paralelo)
-        ★ Hito: prueba con 5 personas nuevas
-Ola 5:  T19 empaquetado y release
+Ola 0 · completada: T0 → T1–T10
+Ola 1 · siguiente: T14 servidor local (solo recorrido local)
+                  → T15 shell/dashboard/clase · T16 grabadora · T17 asistente
+                  → T19 ZIP candidato para probar el recorrido local
+Ola 2:            hito humano Linux + Windows + TF2 real + T19 release candidato
+Ola 3:            T11 group(→T8) → T12 sync(→T8,T11,T4,T5) → T13 integración
+                  → T7 túnel real desde host → T18 UI de grupo
+Ola 4:            prueba con 5 personas, accesibilidad y correcciones
+Ola 5:            T19 release final y T20 comodidad opcional
 ```
+
+### Regla de ejecución
+
+**Prioridad del usuario (2026-10-15):** primero completar y comprobar el recorrido funcional local en Linux. Windows aún no se ha probado y su validación se pospone hasta estabilizar Linux; no bloquea mejoras ni pruebas locales. Esto no marca el hito de la Ola 2 como completado ni autoriza iniciar colaboración.
+
+T14–T17 se pueden desarrollar como una rebanada local aunque T11, T12 y T7 no existan. El servidor expone primero solo API local; sus endpoints de grupo se añaden después de T12 bajo el mismo propietario de archivos. T7 no bloquea ningún hito local. T19 se ejecuta dos veces: primero como ZIP candidato y después con la colaboración terminada.
 
 ---
 
@@ -135,6 +142,8 @@ def ensure_cloudflared() -> Path                  # descarga una vez a data_dir(
 ```
 - Elige el binario según SO y arquitectura (windows-amd64.exe, linux-amd64, linux-arm64), con versión fija y hash fijado en el código. Lanza `cloudflared tunnel --url http://127.0.0.1:<port> --no-autoupdate` y lee el link de su salida con una regex. El proceso muere junto con la app; en Windows con `CREATE_NO_WINDOW`.
 - **Aceptación:** la regex se prueba con salidas reales grabadas (fixtures). La descarga y el arranque se prueban a mano en Linux (prueba marcada con `skipUnless(os.environ.get("NET_TESTS"))`).
+
+**Orden revisado:** aunque T7 ya está implementada y probada de forma aislada, no bloquea la Ola 1 ni la Ola 2. Solo se integra en el flujo `host` después de que T12 pase sus pruebas locales.
 
 ---
 
@@ -250,20 +259,26 @@ class Group:   # se guarda en data_dir()/group.json; la parte replicable va en e
 
 ---
 
-## Ola 4 (web)
+## Ola 1 (primer uso local; web)
 
 ### T14 — Servidor local y API (`server.py`)
-**Archivos:** `tf2reaudio/server.py`, `tf2reaudio/__main__.py` (subcomandos `run`, `host`), `tests/test_server.py`
-**Depende de:** todo lo anterior.
+**Archivos:** `tf2reaudio/server.py`, `tf2reaudio/__main__.py` (subcomandos `run`, `host`), `tests/test_server.py`, `tests/test_cli.py` (solo las pruebas de `run`/`host`, relevo de T10)
+**Depende en la primera entrega:** T1, T2, T3, T4, T5, T8, T9 y T10. Los endpoints de grupo dependen además de T11/T12 y se incorporan en una segunda entrega de esta misma tarea.
 - `ThreadingHTTPServer` en `127.0.0.1:8440` (si está ocupado, prueba el siguiente puerto). Guarda el puerto en `data_dir()/instance.json`. **Instancia única:** si ya hay una corriendo (responde `/api/ping`), solo abre el navegador y termina.
 - Rechaza cualquier petición cuyo `Host` no sea `127.0.0.1:<port>` o `localhost:<port>`. Los `POST` exigen `Content-Type: application/json` o el WAV, más un header `X-TF2RA: 1` (contra CSRF).
-- API JSON para la UI: estado general (TF2, grupo, pendientes), clases y líneas con su estado, `GET /api/original/<line>` (MP3 leído del VPK), `GET /api/take/<id>`, `POST /api/take` (WAV), set-active, undo, resolve, override local, apply, settings (ruta de TF2, puerto RCON), launch options, `check-connection`, grupo (crear, invitar, unirse, update link, miembros, cast) y export/import/disable/uninstall.
-- `run`: llama `set_low_priority()`, abre el navegador con `webbrowser` y arranca el `Syncer` si hay grupo. `host`: lo mismo, más el servidor de sincronización de T12 y el túnel de T7, y muestra el link.
+- API JSON local de la primera entrega: estado general (TF2, grupo, pendientes), clases y líneas con su estado, `GET /api/original/<line>` (MP3 leído del VPK), `GET /api/take/<id>`, `POST /api/take` (WAV), set-active, undo, resolve, override local, apply, settings (ruta de TF2, puerto RCON), launch options, `check-connection` y export/import/disable/uninstall. Los endpoints de grupo (crear, invitar, unirse, update link, miembros y cast) se incorporan después de T12.
+- `run`: llama `set_low_priority()`, abre el navegador con `webbrowser` y arranca el servidor local; el `Syncer` se añade cuando exista un grupo. `host` puede arrancar primero como entrada local y solo añade el servidor de sincronización de T12 y el túnel de T7 después de completar la Ola 3.
 - Sirve `tf2reaudio/web/` como estático, con las imágenes de las clases incluidas en el paquete (sin depender de la wiki).
 - **Aceptación:** pruebas de la API con `urllib` (no hace falta navegador), de la instancia única y del rechazo de `Host` ajeno.
 
+**Entrega 1, obligatoria antes de colaborar:** `/api/ping`, estado de instalación/TF2, catálogo, original, toma WAV, historial, set-active, undo, override local, apply, ajustes, export/import, disable y uninstall. `run` debe abrir el navegador; `host` puede mostrar temporalmente un mensaje claro de que la colaboración aún no está habilitada.
+
+**Entrega 2, después de T12:** endpoints de grupo y sincronización de la UI. No se debe introducir una dependencia artificial de red en el primer uso local.
+
+**Avance T14 (2026-10-15):** integradas las cabeceras CSP y Referrer-Policy de OpenCode/Opus (`55fb725`), conservando no-store, nosniff y DENY. `media-src 'self' blob:` permite preescuchar tomas locales. Pruebas de servidor cubren respuestas normales y errores JSON; una prueba de navegador verifica bloqueo real de scripts inline y reproducción blob. Suite completa con Chromium: 179 pruebas, OK, 2 omitidas. Los errores del parser HTTP base están en revisión aparte. Esto no acredita Windows ni funcionamiento de RCON/audio dentro del juego.
+
 ### T15 — Web: shell, dashboard y página de clase
-**Archivos:** `tf2reaudio/web/index.html`, `web/app.js`, `web/style.css`, `web/strings.js`, `web/img/`
+**Archivos:** `tf2reaudio/web/index.html`, `web/app.js`, `web/style.css`, `web/strings.js`, `web/img/`, `tests/test_web.py` (aceptación integrada de la web; micrófono y TF2 falsos)
 - HTML, CSS y JS sin frameworks ni build, todo local (sin CDNs). Todos los textos van en `strings.js`.
 - Cabecera con los estados de TF2 y del grupo, más "Apply N changes to TF2" (PLAN §7.7).
 - Dashboard: 9 tarjetas con imagen, nombre debajo, "Suggested voice" y progreso por comandos lógicos.
@@ -282,12 +297,16 @@ class Group:   # se guarda en data_dir()/group.json; la parte replicable va en e
 - PLAN §7.1–7.3: "Start solo" / "Join friends", TF2 detectado más "Choose another folder" (campo de ruta validado por la API, porque el navegador no puede abrir un selector de carpetas del sistema), los tres errores distinguidos, retirar `tf2reaudio_test`, "Restart TF2 once", "Copy launch options" con su aviso y "Check connection".
 - Ajustes: carpeta de TF2, modo de aplicar (manual/auto, si el hito de la Ola 2 lo permite), export/import y desinstalación en tres niveles.
 
+**Estado revisado (2026-10-13):** T14–T17 tienen implementación del recorrido local y de recuperación: restore, undo, historial/escucha, overrides, detalles/variantes, resolución de conflictos importados, export/import, RCON port, test mod, recordatorios de reinicio y desinstalación guiada. Se corrigieron el micrófono al cerrar con Escape, el temporizador de 10 s, framing y reutilización de puerto en Windows. La suite con Chromium activado pasa 173 pruebas (2 omitidas), incluidas cinco pruebas de navegador con fixtures. T19 prepara el ZIP candidato. **Aceptación aún pendiente:** Windows nativo, micrófonos físicos, TF2 real/RCON/Casual, todos los recorridos por teclado, lectores de pantalla y WCAG completa. No se marcan esos hitos como entregados. Informe: `docs/local-ui-review.md`.
+
+## Ola 3 (colaboración)
+
 ### T18 — Web: grupo
 **Archivos:** `tf2reaudio/web/group.js`
 - "Create group", "Join a group" (pegar link + código), "Share invite" (copia el link y el código juntos), "Update link", miembros y roles (solo los admins ven expulsar y promover), el "cast menu" (Suggested voice por clase) y "Host for the group" (on/off, muestra el link). El host se explica en una línea: "This PC keeps everyone connected while the app is open."
 - Mensajes de estado del PLAN: "Host offline – N recordings saved here", "Update required" y la invitación vencida.
 
-### ★ Hito de la Ola 4: prueba con usuarios
+### ★ Hito de la Ola 4: prueba con usuarios y accesibilidad
 Las tareas de AUDITORIA_UX.md §6 con 5 personas que no conocen el proyecto (Windows y Linux). Se corrigen los bloqueos antes de seguir.
 
 ---
@@ -295,6 +314,14 @@ Las tareas de AUDITORIA_UX.md §6 con 5 personas que no conocen el proyecto (Win
 ## Ola 5
 
 ### T19 — Empaquetado y release
-**Archivos:** `tools/build_zip.py`, `docs/README.md` (en inglés, para usuarios)
+**Archivos:** `tools/build_zip.py`, `tests/test_build_zip.py`, `docs/README.md` (en inglés, para usuarios), `docs/local-ui-review.md` (informe de entrega y límites de validación)
+- **Decisión del usuario (2026-10-15): mantener el proyecto privado por ahora.** Se permiten builds locales para revisión; no publicar repositorio, ZIP ni releases y no elegir licencia. La publicación queda aplazada hasta una instrucción futura del usuario.
 - Arma `dist/TF2ReAudio-<version>.zip` con `tf2reaudio/`, los lanzadores y el README, **sin** datos, `rcon_password.txt` ni `__pycache__`. Imprime el SHA-256 del ZIP.
 - README: instalar, actualizar (reemplazar la carpeta; los datos viven aparte), desinstalar y qué hacer si algo falla (correr `doctor`).
+
+**Entrega revisada:** implementada la generación reproducible y atómica del ZIP candidato, con exclusión de datos/secretos/cachés y pruebas de integridad. Se ejecuta ahora para validar el recorrido local en Linux y preparar las pruebas posteriores de Windows. Se repetirá para el candidato final privado después de T18 y de la aceptación humana. El candidato actual no demuestra compatibilidad nativa con Windows ni el funcionamiento de los reemplazos dentro de TF2 real.
+
+### T20 — Comodidad posterior (opcional)
+**Archivos:** los que se definan en una tarea específica después de la prueba con usuarios.
+- Solo se crea si la Ola 4 identifica una fricción concreta: grabación consecutiva, filtros, importar audio o controles de volumen/recorte.
+- No se inicia por anticipado ni se usa para bloquear el release local.

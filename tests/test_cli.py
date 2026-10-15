@@ -188,8 +188,10 @@ class CliTest(unittest.TestCase):
         self.assertIn("TF2 rejected the password", out)
         self.assertNotIn(PW, out)
 
-    def test_stubs_untouched(self):
-        self.assertEqual(self.run_cli("run")[0], 1)
+    def test_run_and_host(self):
+        with mock.patch("tf2reaudio.__main__.run_local", return_value=0) as run:
+            self.assertEqual(self.run_cli("run", "--no-browser", "--port", "0")[0], 0)
+            run.assert_called_once_with(None, 0, browser=False)
         self.assertEqual(self.run_cli("host")[0], 1)
 
 

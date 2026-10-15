@@ -1,4 +1,7 @@
+import contextlib
+import errno
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -31,6 +34,44 @@ class AtomicWriteTest(unittest.TestCase):
                 util.atomic_write(target, b"new")
         self.assertEqual(target.read_bytes(), b"old")
         self.assertEqual(os.listdir(self.dir), ["a.json"])
+
+    def test_full_disk_during_write_preserves_old_file(self):
+        target = self.dir / "collection.json"
+        util.atomic_write(target, b"previous collection")
+        fdopen = os.fdopen
+
+        @contextlib.contextmanager
+        def full_disk(fd, mode):
+            with fdopen(fd, mode) as stream:
+                failing = mock.Mock(wraps=stream)
+                failing.write.side_effect = OSError(errno.ENOSPC, "No space left on device")
+                yield failing
+
+        with mock.patch("tf2reaudio.util.os.fdopen", side_effect=full_disk):
+            with self.assertRaises(OSError) as raised:
+                util.atomic_write(target, b"new collection")
+        self.assertEqual(raised.exception.errno, errno.ENOSPC)
+        self.assertEqual(target.read_bytes(), b"previous collection")
+        self.assertEqual(list(self.dir.iterdir()), [target])
+
+    def test_fsync_failure_preserves_old_file(self):
+        target = self.dir / "collection.json"
+        util.atomic_write(target, b"previous collection")
+        with mock.patch("tf2reaudio.util.os.fsync", side_effect=OSError(errno.EIO, "Disk error")):
+            with self.assertRaises(OSError) as raised:
+                util.atomic_write(target, b"new collection")
+        self.assertEqual(raised.exception.errno, errno.EIO)
+        self.assertEqual(target.read_bytes(), b"previous collection")
+        self.assertEqual(list(self.dir.iterdir()), [target])
+
+    @unittest.skipIf(os.name == "nt", "POSIX file permissions")
+    def test_private_permissions_on_create_and_replace(self):
+        target = self.dir / "settings.json"
+        util.atomic_write(target, b"private")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        target.chmod(0o644)
+        util.atomic_write(target, b"still private")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
 
 class DataDirTest(unittest.TestCase):

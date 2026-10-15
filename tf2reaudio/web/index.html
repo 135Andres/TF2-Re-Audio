@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>TF2 Re-Audio</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main" data-text="skip"></a>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">♪</span><span data-text="app"></span></div>
+    <div class="top-status" aria-live="polite">
+      <span id="tf-status" class="status-pill" data-text="tfChecking"></span>
+      <span id="group-status" class="status-pill" data-text="solo"></span>
+      <button id="apply-button" class="button primary" type="button" hidden data-text="apply"></button>
+    </div>
+  </header>
+  <main id="main" class="shell" tabindex="-1">
+    <section id="notice" class="notice" role="status" aria-live="polite" hidden></section>
+    <section id="restart-notice" class="callout warning" hidden><strong data-text="restart"></strong><p data-text="restartHelp"></p><button id="restart-confirmed" class="button secondary" type="button" data-text="restartConfirmed"></button></section>
+    <section id="disabled-notice" class="callout warning" hidden data-text="disabled"></section>
+    <section id="test-mod-notice" class="callout warning" hidden><p data-text="testMod"></p><button id="remove-test-mod" class="button secondary" type="button" data-text="removeTest"></button></section>
+
+    <section id="setup-view" class="panel setup-panel" hidden aria-labelledby="setup-title">
+      <p class="eyebrow" data-text="firstUse"></p><h1 id="setup-title" tabindex="-1" data-text="setupTitle"></h1>
+      <p class="lede" data-text="setupIntro"></p><div id="setup-error" class="callout warning" role="alert" hidden></div>
+      <div class="setup-actions">
+        <button id="start-solo" class="button primary" type="button" data-text="startSolo"></button>
+        <button id="show-join" class="button secondary" type="button" disabled data-title="groupSoon"><span data-text="join"></span> <span class="soon" data-text="soon"></span></button>
+        <button id="choose-folder" class="button secondary" type="button" data-text="chooseFolder"></button>
+      </div>
+      <div class="folder-form">
+        <label for="tf-path" data-text="folder"></label>
+        <div class="inline-form"><input id="tf-path" type="text" autocomplete="off" data-placeholder="folderPlaceholder"><button id="save-tf" class="button secondary" type="button" data-text="useFolder"></button></div>
+        <p class="help" data-text="folderHelp"></p>
+      </div>
+      <div id="installs" class="install-list" aria-live="polite"></div>
+    </section>
+
+    <section id="dashboard-view" hidden aria-labelledby="dashboard-title">
+      <div class="hero-row">
+        <div><p class="eyebrow" data-text="collection"></p><h1 id="dashboard-title" tabindex="-1" data-text="chooseClass"></h1><p class="lede" data-text="dashboardIntro"></p></div>
+        <button id="settings-button" class="button secondary" type="button" data-text="settings"></button>
+      </div>
+      <div id="class-grid" class="class-grid"></div>
+    </section>
+
+    <section id="class-view" hidden aria-labelledby="class-title">
+      <button id="back-dashboard" class="back-link" type="button" data-text="allClasses"></button>
+      <div class="hero-row class-heading"><div><p class="eyebrow" data-text="class"></p><h1 id="class-title" tabindex="-1"></h1><p id="class-progress" class="lede"></p></div><div class="line-actions"><button id="start-medic" class="button primary" type="button" data-text="startMedic"></button><button id="next-line" class="button secondary" type="button" data-text="nextLine"></button></div></div>
+      <div class="tabs" role="tablist" data-aria-label="categories">
+        <button id="tab-voice_menu" class="tab active" role="tab" aria-selected="true" aria-controls="line-list" data-category="voice_menu" type="button" data-text="voiceMenu"></button>
+        <button id="tab-pain_death" class="tab" role="tab" aria-selected="false" aria-controls="line-list" tabindex="-1" data-category="pain_death" type="button" data-text="painDeath"></button>
+        <button id="tab-domination" class="tab" role="tab" aria-selected="false" aria-controls="line-list" tabindex="-1" data-category="domination" type="button" data-text="domination"></button>
+        <button id="tab-all" class="tab" role="tab" aria-selected="false" aria-controls="line-list" tabindex="-1" data-category="all" type="button" data-text="allLines"></button>
+      </div>
+      <div class="line-tools"><label for="line-search" data-text="findLine"></label><input id="line-search" type="search" data-placeholder="searchPlaceholder"><label class="check-label"><input id="pending-filter" type="checkbox"><span data-text="pendingOnly"></span></label></div>
+      <div id="line-list" class="line-list" role="tabpanel" aria-labelledby="tab-voice_menu"></div>
+    </section>
+
+    <dialog id="recorder-dialog" class="recorder-dialog" aria-labelledby="recorder-title">
+      <form method="dialog" class="dialog-shell" id="recorder-form">
+        <button id="close-recorder" class="dialog-close" value="cancel" data-aria-label="closeRecorder">×</button>
+        <p class="eyebrow" data-text="recording"></p><h2 id="recorder-title" data-text="recorderTitle"></h2><p id="recorder-line" class="lede"></p>
+        <p class="help" data-text="recordingScope"></p><ul id="recorder-files" class="technical"></ul>
+        <div class="recorder-controls"><label for="microphone" data-text="microphone"></label><select id="microphone"><option value="" data-text="defaultMicrophone"></option></select><button id="test-mic" class="button secondary" type="button" data-text="testMic"></button></div>
+        <label class="check-label"><input id="trim-silence" type="checkbox" checked><span data-text="trimSilence"></span></label>
+        <div class="meter-wrap"><div id="level-meter" class="meter" role="progressbar" data-aria-label="micLevel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="level-bar"></span></div><span id="level-text" data-text="notRecording"></span></div>
+        <div class="timer"><span id="timer">00:00.0</span><span>/ 00:10.0</span></div>
+        <div id="recorder-error" class="callout error" role="alert" hidden></div>
+        <div class="recorder-actions"><button id="record-button" class="button record" type="button" data-text="startRecording"></button><button id="stop-button" class="button secondary" type="button" disabled data-text="stop"></button></div>
+        <audio id="take-preview" class="take-preview" controls hidden></audio><div id="take-warning" class="callout warning" role="status" hidden></div>
+        <div class="review-actions"><button id="retake-button" class="button secondary" type="button" hidden data-text="retake"></button><button id="discard-button" class="button ghost" type="button" hidden data-text="discard"></button><button id="save-button" class="button primary" type="button" hidden data-text="saveRecording"></button></div>
+      </form>
+    </dialog>
+
+    <dialog id="history-dialog" aria-labelledby="history-title">
+      <div class="dialog-shell"><form method="dialog"><button class="button secondary" data-text="back"></button></form><h2 id="history-title"></h2><p data-text="historyIntro"></p><div id="history-list" class="line-list"></div></div>
+    </dialog>
+
+    <section id="settings-view" class="panel settings-panel" hidden aria-labelledby="settings-title">
+      <button id="back-settings" class="back-link" type="button" data-text="back"></button><p class="eyebrow" data-text="setup"></p><h1 id="settings-title" tabindex="-1" data-text="settings"></h1>
+      <div id="settings-message" class="callout" role="status" hidden></div>
+      <label for="settings-tf-path" data-text="folder"></label><div class="inline-form"><input id="settings-tf-path" type="text"><button id="settings-save" class="button primary" type="button" data-text="saveFolder"></button></div>
+      <h2 data-text="connection"></h2><p class="help" data-text="connectionHelp"></p>
+      <label for="rcon-port" data-text="rconPort"></label><div class="inline-form"><input id="rcon-port" type="number" min="1" max="65535"><button id="save-rcon-port" class="button secondary" type="button" data-text="savePort"></button></div>
+      <p class="help" data-text="optionsHelp"></p><div class="inline-form"><button id="copy-options" class="button secondary" type="button" data-text="copyOptions"></button><button id="check-connection" class="button secondary" type="button" data-text="checkConnection"></button><button id="apply-later" class="button secondary" type="button" data-text="applyLater"></button></div>
+      <textarea id="launch-options" readonly data-aria-label="copyOptions" hidden></textarea>
+      <h2 data-text="backup"></h2><p class="help" data-text="backupHelp"></p><button id="export-collection" class="button secondary" type="button" data-text="export"></button>
+      <label for="import-file" data-text="chooseZip"></label><div class="inline-form"><input id="import-file" type="file" accept=".zip,application/zip"><button id="import-collection" class="button secondary" type="button" data-text="import"></button></div>
+      <div class="settings-danger"><h2 data-text="removeVoices"></h2><p data-text="disableHelp"></p><div class="line-actions"><button id="disable-voices" class="button secondary" type="button" data-text="disable"></button><button id="enable-voices" class="button secondary" type="button" data-text="enable" hidden></button></div>
+        <p data-text="deleteHelp"></p><button id="delete-collection" class="button secondary" type="button" data-text="deleteCollection"></button>
+        <p data-text="uninstallHelp"></p><label class="check-label"><input id="uninstall-delete" type="checkbox"><span data-text="deleteWithUninstall"></span></label><button id="uninstall" class="button secondary" type="button" data-text="uninstall"></button>
+        <div id="uninstall-guide" class="callout warning" hidden><p data-text="uninstallDone"></p><textarea id="remove-options" readonly data-aria-label="copyOptions"></textarea></div>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><span data-text="footer"></span> <span id="app-version"></span></footer>
+  <script src="/strings.js"></script><script src="/wav.js"></script><script src="/recorder.js"></script><script src="/setup.js"></script><script src="/app.js"></script>
+</body>
+</html>

@@ -54,3 +54,83 @@ On Windows, use `py -3 -c "..."` instead of `python3 -c "..."`, or run `runtime\
 - Windows only: your Windows version (`winver`) and the launcher checklist results.
 
 Do not send the output of `setup`: it contains your RCON password.
+
+## D. Result sheet and decision
+
+Copy this sheet for each PC. Leave an item as **Not run** until a person has
+actually checked it; fixture tests do not count as real-game results.
+
+```text
+Date:
+Tester:
+OS and version (Windows: winver):
+Python version / bundled runtime:
+Browser and version (if testing the web recorder):
+Candidate ZIP filename and SHA-256:
+
+Launcher checklist: Not run / Pass / Fail
+doctor finds TF2 and reads the voice archive: Not run / Pass / Fail
+RCON connects to real TF2 without timeout: Not run / Pass / Fail
+First imported voice plays after restarting TF2: Not run / Pass / Fail
+Second voice imports while TF2 is running: Not run / Pass / Fail
+apply during a real Casual match: Not run / Pass / Fail
+New voice plays after apply without restarting TF2: Not run / Pass / Fail
+Repeat apply gives the same result: Not run / Pass / Fail
+Stutter duration and whether audio returns:
+Windows file replacement while TF2 runs: Not run / Pass / Fail
+If replacement failed, retry after closing TF2: Not run / Pass / Fail
+Physical microphone recording, preview and Save: Not run / Pass / Fail
+doctor --copy report path:
+Exact error messages (remove secrets):
+```
+
+A local map can help diagnose a problem, but it does not measure Casual
+mid-game behavior. Record that distinction rather than marking the Casual
+item as passed.
+
+The Wave 2 gate stays open until the required Linux and native Windows
+real-game checks pass and their results are recorded. A failure needs a fix
+and a repeat of the affected check. Group/sync development and automatic
+apply remain gated; measuring a short interruption alone does not enable
+automatic apply. Physical microphone and accessibility results are separate
+from the CLI/game checks and must not be inferred from them.
+
+## E. Linux local checks — 2026-10-15
+
+The user wants the local Linux workflow functional before testing Windows.
+Windows remains untested. The checks below advance Linux validation without
+closing the real-game gate:
+
+- Steam discovery found the installed native TF2. Its real voice archive
+  contained 12,728 paths; parsing it and building the catalog took 142 ms in
+  this run. The MEDIC! original for each of the nine classes was read and its
+  CRC verified.
+- With temporary app data and browser requests restricted to same-origin GETs,
+  Chromium displayed nine class cards, 23 Soldier voice-menu lines and 1,304
+  Soldier lines in All lines. It decoded an original MP3 and playback time
+  advanced. Search and 200% zoom worked without JavaScript errors or horizontal
+  overflow in the checked view. A screenshot was inspected.
+- The Linux launcher started the normal local app at `http://127.0.0.1:8440`;
+  its API reported the detected TF2 path and no pending changes or collection
+  warning. It detected the old Phase 0 test mod and displayed the removal
+  warning. That mod was left in place.
+- After integrating T14 security headers, the full Linux suite with Chromium
+  ran 179 tests, OK, 2 skipped. The six browser checks include actual inline
+  script blocking and local blob-audio playback; disabling CSP makes that
+  check fail. These browser tests use fake microphones and temporary TF2
+  fixtures. The running local server was restarted and its new headers checked.
+- A private ZIP was built twice with identical bytes and its integrity checked.
+  The extracted Python entry point (`--version`, `run --help`) and Linux
+  launcher (`--version`) ran successfully. This is still a local candidate.
+- The extracted ZIP also passed a full local workflow using only a temporary
+  fake TF2 folder and loopback fake RCON: `doctor`, `import-wav` installing
+  three variants, `apply` sending `snd_restart`, and `doctor --copy` showing
+  zero pending files without the fixture password. Its packaged web server
+  served the UI assets, nine classes and an original preview; Restore removed
+  the three installed fixture files. This proves the packaged workflow against
+  fixtures, not against a running game.
+
+These checks installed no recordings and sent no RCON commands. Physical
+microphone recording, hearing replacements in the game and `apply` during
+Casual still need real-use results. Browser playback progress is evidence of
+decoding, not a human listening test.

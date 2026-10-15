@@ -10,6 +10,7 @@ from . import __version__, catalog, steam
 from .audio import InvalidWav
 from .game import MOD_DIR, TEST_MOD_DIR, Game
 from .rcon import RconError
+from .server import ServerError, run_local
 from .store import Store, StoreError
 from .util import atomic_write, data_dir
 from .vpk import VpkError, VpkIndex
@@ -187,6 +188,16 @@ def cmd_apply(args) -> int:
     return 0 if result == "sent" else 1
 
 
+def cmd_run(args) -> int:
+    """Start the local application, reusing a running instance when possible."""
+    return run_local(Path(args.tf) if args.tf else None, args.port, browser=not args.no_browser)
+
+
+def cmd_host(args) -> int:
+    print("Group hosting is not available yet. Use `run` for the local app.", file=sys.stderr)
+    return 1
+
+
 def cmd_lines(args) -> int:
     found = load_catalog(pick_tf(args.tf))[1].lines(args.cls, args.category)
     width = max((len(line.id) for line in found), default=0)
@@ -201,10 +212,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="tf2reaudio", description="TF2 Re-Audio")
     parser.add_argument("--version", action="version", version=f"TF2 Re-Audio {__version__}")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("run", help="Start the app and open it in your browser")
-    sub.add_parser("host", help="Run the app and host your group")
     tf_help = "TF2 folder to use (default: the first one found through Steam)"
-
+    p = sub.add_parser("run", help="Start the local app and open it in your browser")
+    p.add_argument("--tf", help=tf_help)
+    p.add_argument("--port", type=int, default=8440, help="local HTTP port (default: 8440)")
+    p.add_argument("--no-browser", action="store_true", help="print the local URL without opening a browser")
+    p.set_defaults(func=cmd_run)
+    p = sub.add_parser("host", help="Start the local app; group hosting is added later")
+    p.add_argument("--tf", help=tf_help)
+    p.add_argument("--port", type=int, default=8440, help="local HTTP port (default: 8440)")
+    p.set_defaults(func=cmd_host)
     p = sub.add_parser("doctor", help="Check your setup and print a report (no passwords)")
     p.add_argument("--tf", help=tf_help)
     p.add_argument("--copy", action="store_true", help="also save the report to a text file")
@@ -235,12 +252,9 @@ def main(argv=None):
     if args.command is None:
         parser.print_help()
         return 2
-    if not hasattr(args, "func"):  # run, host: T14
-        print("Not implemented yet", file=sys.stderr)
-        return 1
     try:
         return args.func(args)
-    except (Problem, VpkError, StoreError, RconError) as e:
+    except (Problem, ServerError, VpkError, StoreError, RconError) as e:
         print(f"Error: {e}", file=sys.stderr)
     except OSError as e:
         print(f"Error: {e.strerror or e}{f' ({e.filename})' if e.filename else ''}", file=sys.stderr)
