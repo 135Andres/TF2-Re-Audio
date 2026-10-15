@@ -136,7 +136,15 @@ closing the real-game gate:
   confirmed that foreign files, hash-named directories and symlinks survive
   normal saves/pruning without changing their targets. Windows remains untested.
 
-These checks installed no recordings and sent no RCON commands. Physical
+- T14 framework-error follow-up: 25 server tests pass, including strict wire
+  checks for DELETE 501, HEAD 501 without a body, and oversized-header 431.
+  Removing the centralized header hook makes all three cases fail. The next
+  full run executed 192 tests with two skips and exposed a keyboard-focus
+  failure after saving a variant recording. That failure is under investigation;
+  the current integration is not yet a clean full-suite result.
+
+The real-installation checks installed no recordings and sent no RCON commands
+to the real game. Physical
 microphone recording, hearing replacements in the game and `apply` during
 Casual still need real-use results. Browser playback progress is evidence of
 decoding, not a human listening test.

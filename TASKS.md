@@ -277,7 +277,7 @@ class Group:   # se guarda en data_dir()/group.json; la parte replicable va en e
 
 **Entrega 2, después de T12:** endpoints de grupo y sincronización de la UI. No se debe introducir una dependencia artificial de red en el primer uso local.
 
-**Avance T14 (2026-10-15):** integradas las cabeceras CSP y Referrer-Policy de OpenCode/Opus (`55fb725`), conservando no-store, nosniff y DENY. `media-src 'self' blob:` permite preescuchar tomas locales. Pruebas de servidor cubren respuestas normales y errores JSON; una prueba de navegador verifica bloqueo real de scripts inline y reproducción blob. Suite completa con Chromium: 179 pruebas, OK, 2 omitidas. Los errores del parser HTTP base están en revisión aparte. Esto no acredita Windows ni funcionamiento de RCON/audio dentro del juego.
+**Avance T14 (2026-10-15):** integradas las cabeceras CSP y Referrer-Policy de OpenCode/Opus (`55fb725`), conservando no-store, nosniff y DENY. `media-src 'self' blob:` permite preescuchar tomas locales. Pruebas de servidor cubren respuestas normales y errores JSON; una prueba de navegador verifica bloqueo real de scripts inline y reproducción blob. Suite completa con Chromium: 179 pruebas, OK, 2 omitidas. Seguimiento de OpenCode/Opus (`d209314`) integrado: `end_headers()` cubre también errores 501/431 del framework sin duplicar cabeceras y preserva HEAD sin cuerpo; la prueba del coordinador exige estado y cuerpo exactos. Esto no acredita Windows ni funcionamiento de RCON/audio dentro del juego.
 
 ### T15 — Web: shell, dashboard y página de clase
 **Archivos:** `tf2reaudio/web/index.html`, `web/app.js`, `web/style.css`, `web/strings.js`, `web/img/`, `tests/test_web.py` (aceptación integrada de la web; micrófono y TF2 falsos)

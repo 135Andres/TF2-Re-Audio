@@ -448,6 +448,46 @@ class ServerTest(unittest.TestCase):
         for path in ("/../secret.txt", "/%2e%2e/secret.txt", "/settings.json", "/%00"):
             self.assertEqual(self.request(path)[0], 404)
 
+    def test_framework_error_responses_carry_security_headers(self):
+        from tf2reaudio.server import CSP_VALUE
+
+        expected = {
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "x-frame-options": "DENY",
+            "content-security-policy": CSP_VALUE,
+            "referrer-policy": "no-referrer",
+        }
+        for method, extra, status in (
+            ("DELETE", "", 501),
+            ("HEAD", "", 501),
+            ("GET", "X-Big: " + "x" * 70000 + "\r\n", 431),
+        ):
+            with self.subTest(method=method, status=status):
+                with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+                    sock.sendall((
+                        f"{method} /api/state HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{self.server.port}\r\n"
+                        f"{extra}Connection: close\r\n\r\n"
+                    ).encode("ascii"))
+                    # Read the complete wire response: HTTPResponse(method="HEAD")
+                    # would hide an incorrectly transmitted HEAD response body.
+                    with sock.makefile("rb") as stream:
+                        wire = stream.read()
+                raw_headers, body = wire.split(b"\r\n\r\n", 1)
+                lines = raw_headers.decode("iso-8859-1").split("\r\n")
+                self.assertEqual(int(lines[0].split()[1]), status)
+                pairs = [line.split(":", 1) for line in lines[1:]]
+                headers = {key.lower(): value.strip() for key, value in pairs}
+                for key, value in expected.items():
+                    self.assertEqual(headers.get(key), value)
+                    self.assertEqual(sum(name.lower() == key for name, _ in pairs), 1)
+                self.assertGreater(int(headers["content-length"]), 0)
+                if method == "HEAD":
+                    self.assertEqual(body, b"")
+                else:
+                    self.assertEqual(len(body), int(headers["content-length"]))
+
 
 if __name__ == "__main__":
     unittest.main()

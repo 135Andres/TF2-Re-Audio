@@ -310,15 +310,18 @@ class _Handler(BaseHTTPRequestHandler):
         return len(hosts) == 1 and hosts[0] in {
             f"127.0.0.1:{self.local_server.port}", f"localhost:{self.local_server.port}"}
 
-    def _send(self, status: int, body: bytes = b"", content_type: str = "application/json; charset=utf-8"):
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+    def end_headers(self):  # noqa: N802 - BaseHTTPRequestHandler API
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Security-Policy", CSP_VALUE)
         self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
+
+    def _send(self, status: int, body: bytes = b"", content_type: str = "application/json; charset=utf-8"):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if body:
             self.wfile.write(body)
