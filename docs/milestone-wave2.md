@@ -129,6 +129,12 @@ closing the real-game gate:
   served the UI assets, nine classes and an original preview; Restore removed
   the three installed fixture files. This proves the packaged workflow against
   fixtures, not against a running game.
+- After integrating the T8 collection protections, the full Linux suite with
+  Chromium ran 191 tests, OK, 2 skipped. It covers old/future collection formats,
+  preserving damaged files, ZIP bounds and backup-safe cleanup. Removing each
+  ZIP limit in memory makes its dedicated test fail. An additional Linux check
+  confirmed that foreign files, hash-named directories and symlinks survive
+  normal saves/pruning without changing their targets. Windows remains untested.
 
 These checks installed no recordings and sent no RCON commands. Physical
 microphone recording, hearing replacements in the game and `apply` during

@@ -23,6 +23,7 @@ from .util import atomic_write
 
 ORIGINAL = "ORIGINAL"
 KEEP_INACTIVE = 5
+FORMAT_VERSION = 1
 
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _SHA = re.compile(r"[0-9a-f]{64}")
@@ -32,10 +33,16 @@ _BLOB_ENTRY = re.compile(r"blobs/([0-9a-f]{64})\.wav")
 _TAKE_KEYS = ("take_id", "sha256", "line_id", "author_member_id", "device_id", "created_at", "lamport")
 _EVENT_KEYS = ("event_id", "line_id", "target", "parent_event_id", "merges", "lamport", "device_id")
 _MAX_JSON = 50_000_000
+_MAX_ZIP_ENTRIES = 10000
+_MAX_ZIP_TOTAL_BYTES = 128 * 1024 * 1024
 
 
 class StoreError(Exception):
     """Expected problem with the collection; the message is shown to the user."""
+
+
+class UnsupportedFormat(StoreError):
+    """Collection uses a newer format; updating the app is required."""
 
 
 def _is(rx, value) -> bool:
@@ -84,16 +91,27 @@ class Store:
 
     def _load(self):
         self._takes, self._events, self._pruned = {}, {}, set()
+        self.warning = None
         if self._file.exists():
             try:
                 self._takes, self._events, self._pruned = self._parse(json.loads(self._file.read_bytes()), False)
-            except (ValueError, StoreError):  # bad JSON, bad UTF-8 or bad shape
+            except UnsupportedFormat:
+                raise
+            except (ValueError, StoreError) as main_err:
+                # Try backup; UnsupportedFormat must not be treated as corruption.
                 try:
                     raw = self._bak.read_bytes()
-                    self._takes, self._events, self._pruned = self._parse(json.loads(raw), False)
-                except (OSError, ValueError, StoreError):
-                    raise StoreError(f"{self._file} is damaged and there is no usable backup. "
-                                     "Move it away to start an empty collection.") from None
+                    try:
+                        self._takes, self._events, self._pruned = self._parse(json.loads(raw), False)
+                    except UnsupportedFormat:
+                        raise
+                except UnsupportedFormat:
+                    raise
+                except (OSError, ValueError, StoreError) as bak_err:
+                    raise StoreError(
+                        f"{self._file} and backup are both damaged ({main_err}; backup: {bak_err}). "
+                        "Move them away to start an empty collection. Blobs were preserved."
+                    ) from None
                 atomic_write(self._file, raw)  # so the next backup rotation copies good data
                 self.warning = "Your collection file was damaged; the previous version was restored."
         try:
@@ -105,6 +123,7 @@ class Store:
 
     def _dump(self) -> bytes:
         snap = {
+            "format_version": FORMAT_VERSION,
             "takes": [self._takes[k] for k in sorted(self._takes)],
             "events": [self._events[k] for k in sorted(self._events)],
             "pruned": sorted(self._pruned),
@@ -143,6 +162,11 @@ class Store:
     def _parse(self, snap, check_lines=True):
         """Validate untrusted replicated data. Returns (takes, events, pruned) or raises StoreError."""
         _need(isinstance(snap, dict), "not an object")
+        fv = snap.get("format_version", 1)
+        _need(type(fv) is int and 1 <= fv <= 2**31 - 1, "bad format_version")
+        if fv != FORMAT_VERSION:
+            if fv > FORMAT_VERSION:
+                raise UnsupportedFormat(f"This collection was saved with a newer app (v{fv}); update the app to open it.")
         takes, events, pruned = (snap.get(k, []) for k in ("takes", "events", "pruned"))
         _need(all(isinstance(x, list) for x in (takes, events, pruned)), "takes, events and pruned must be lists")
         out_t, out_e = {}, {}
@@ -235,7 +259,20 @@ class Store:
 
     def _drop_blobs(self, shas):
         used = {t["sha256"] for t in self._takes.values()}
-        for sha in shas - used:
+        if self._bak.exists():
+            try:
+                bak_raw = self._bak.read_bytes()
+                bak_snap = json.loads(bak_raw)
+                try:
+                    bak_takes, _, _ = self._parse(bak_snap, check_lines=False)
+                    used |= {t["sha256"] for t in bak_takes.values()}
+                except (UnsupportedFormat, ValueError):
+                    return
+                except StoreError:
+                    return
+            except (OSError, ValueError):
+                return
+        for sha in self._present() - used:
             self._blob_path(sha).unlink(missing_ok=True)
 
     # ---- takes and events ----
@@ -409,7 +446,13 @@ class Store:
             return sorted({t["sha256"] for t in self._takes.values()} - self._present())
 
     def _present(self) -> set:
-        return {p.stem for p in self._blobs.glob("*.wav")}
+        out = set()
+        for p in self._blobs.glob("*.wav"):
+            if p.is_symlink() or not p.is_file():
+                continue
+            if _SHA.fullmatch(p.stem):
+                out.add(p.stem)
+        return out
 
     def put_blob(self, data: bytes) -> str:
         """Store downloaded audio (raises InvalidWav). Returns its sha256; callers must compare it with
@@ -437,20 +480,45 @@ class Store:
     def import_zip(self, path) -> list[str]:
         """Merge an exported collection. The whole ZIP is checked before anything is written."""
         snap, blobs = None, {}
+        seen: set[str] = set()
+        total = 0
         try:
             with zipfile.ZipFile(path) as z:
-                for info in z.infolist():
-                    if info.filename == "collection.json" and info.file_size <= _MAX_JSON:
+                infos = z.infolist()
+                if len(infos) > _MAX_ZIP_ENTRIES:
+                    raise StoreError(f"ZIP has too many entries ({len(infos)} > {_MAX_ZIP_ENTRIES}).")
+                for info in infos:
+                    name = info.filename
+                    if name in seen:
+                        raise StoreError(f"Duplicate file in collection ZIP: {name!r}.")
+                    seen.add(name)
+                    if info.is_dir():
+                        if name != "blobs/":
+                            raise StoreError(f"Unexpected file in collection ZIP: {name!r}.")
+                        continue
+                    # Path traversal / absolute
+                    if name.startswith("/") or name.startswith("\\") or ".." in Path(name).parts:
+                        raise StoreError(f"Invalid path in collection ZIP: {name!r}.")
+                    total += info.file_size
+                    if total > _MAX_ZIP_TOTAL_BYTES:
+                        raise StoreError(f"ZIP too large ({total} bytes > {_MAX_ZIP_TOTAL_BYTES}).")
+                    if name == "collection.json":
+                        if info.file_size > _MAX_JSON:
+                            raise StoreError(f"collection.json too large ({info.file_size} bytes).")
                         snap = json.loads(z.read(info))
-                    elif (m := _BLOB_ENTRY.fullmatch(info.filename)) and info.file_size <= MAX_BYTES:
+                    elif (m := _BLOB_ENTRY.fullmatch(name)):
+                        if info.file_size > MAX_BYTES:
+                            raise StoreError(f"Audio file {name!r} too large ({info.file_size} bytes).")
                         data = z.read(info)
                         inspect_wav(data)
                         if hashlib.sha256(data).hexdigest() != m[1]:
-                            raise StoreError(f"Audio file {info.filename} does not match its name.")
+                            raise StoreError(f"Audio file {name!r} does not match its name.")
                         blobs[m[1]] = data
-                    elif info.filename != "blobs/":
-                        raise StoreError(f"Unexpected file in collection ZIP: {info.filename!r}.")
+                    elif name != "blobs/":
+                        raise StoreError(f"Unexpected file in collection ZIP: {name!r}.")
         except (OSError, ValueError, zipfile.BadZipFile, InvalidWav) as e:
+            if isinstance(e, StoreError):
+                raise
             raise StoreError(f"Could not read the collection ZIP: {e}") from None
         if snap is None:
             raise StoreError("The ZIP has no collection.json.")

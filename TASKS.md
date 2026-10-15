@@ -176,6 +176,8 @@ class Store:
 - Poda: más de 5 tomas inactivas por línea → se borran las más viejas, **excepto** las de líneas en conflicto.
 - **Aceptación:** pruebas de undo y redo; merge conmutativo e idempotente (A∪B == B∪A, merge dos veces == una vez); conflicto concurrente que conserva ambas tomas; un borrado viejo no resucita; recuperación desde `.bak`; ningún archivo temporal tras simular un fallo a mitad de escritura.
 
+**Refuerzos T8 integrados (2026-10-15, OpenCode/Opus hasta `0c65512`):** formato interno versión 1 compatible con colecciones anteriores; versiones futuras rechazadas antes de recuperar desde respaldo; corrupción doble conserva datos y muestra un error. Importación ZIP limitada a 10.000 entradas y 128 MiB descomprimidos, con rechazo de duplicados y rutas inesperadas. GC conserva la unión de audios referenciados por colección y respaldo, omite limpieza si el respaldo es ilegible/incompatible y respeta archivos ajenos, directorios y enlaces. Las pruebas restauran la retención exacta y detectan la eliminación de cada límite ZIP. Validación del coordinador: suite completa con Chromium, 191 pruebas, OK, 2 omitidas; comprobación adicional de archivos/enlaces/directorios en Linux. Sin validación nativa de Windows ni de audio dentro del juego.
+
 ### T9 — Puente con el juego (`game.py`)
 **Archivos:** `tf2reaudio/game.py`, `tests/test_game.py`
 **Depende de:** T1, T2, T3, T5, T8.

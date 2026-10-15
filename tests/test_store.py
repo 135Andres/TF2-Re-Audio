@@ -11,7 +11,7 @@ from unittest import mock
 
 from tf2reaudio.audio import RATE, InvalidWav
 from tf2reaudio.catalog import build
-from tf2reaudio.store import KEEP_INACTIVE, ORIGINAL, Store, StoreError
+from tf2reaudio.store import FORMAT_VERSION, KEEP_INACTIVE, ORIGINAL, Store, StoreError, UnsupportedFormat
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vo_index.txt"
 LINE = "soldier/medic"
@@ -131,18 +131,46 @@ class LocalTest(Base):
         stale = old.snapshot()
         takes += [self.take(s) for _ in range(7)]
         kept = [h["take_id"] for h in s.history(LINE)]
-        # active + the one undo returns to + KEEP_INACTIVE more
         self.assertEqual(kept, takes[-(KEEP_INACTIVE + 2):])
         snap = s.snapshot()
         self.assertEqual(set(snap["pruned"]), set(takes[:2]))
         for t in takes[:2]:
             self.assertFalse(any(f.startswith(t) for f in self.files(s)))
         self.assertEqual(len(list((s.root / "blobs").iterdir())), KEEP_INACTIVE + 2)
-        self.assertEqual(s.merge(stale), [])  # the stale copy does not bring them back
+        self.assertEqual(s.merge(stale), [])
         self.assertEqual([h["take_id"] for h in s.history(LINE)], kept)
-        old.merge(snap)  # and they vanish on the stale device too
+        old.merge(snap)
         self.assertIsNone(old.take(takes[0]))
         self.assertEqual(old.snapshot(), snap)
+
+    def test_orphan_blob_gc_respects_backup_between_add_and_activate(self):
+        import hashlib
+        s = self.store("a")
+        takes = [self.take(s) for _ in range(KEEP_INACTIVE + 2)]  # 7, at keep limit
+        oldest = takes[0]
+        oldest_sha = s.take(oldest)["sha256"]
+        self.assertEqual(len(list((s.root / "blobs").iterdir())), KEEP_INACTIVE + 2)
+        new_data = wav(999)
+        new_sha = hashlib.sha256(new_data).hexdigest()
+        s.add_take(LINE, new_data, "member1")
+        # Oldest pruned from primary but still in backup
+        self.assertIsNone(s.take(oldest))
+        self.assertTrue((s.root / "blobs" / f"{oldest_sha}.wav").exists())
+        bak = json.loads((s.root / "collection.json.bak").read_bytes())
+        self.assertTrue(any(t["sha256"] == oldest_sha for t in bak["takes"]))
+        primary_shas = {t["sha256"] for t in s.snapshot()["takes"]}
+        bak_shas = {t["sha256"] for t in bak["takes"]}
+        self.assertEqual(len(primary_shas | bak_shas), KEEP_INACTIVE + 3)  # 8 distinct, one backup-only
+        disk = {p.stem for p in (s.root / "blobs").glob("*.wav")}
+        self.assertEqual(disk, primary_shas | bak_shas)  # exact union, no orphans
+        # Next durable save rotates backup away from oldest
+        s.set_active(LINE, s.history(LINE)[-1]["take_id"])
+        self.assertFalse((s.root / "blobs" / f"{oldest_sha}.wav").exists())
+        self.assertTrue(s.has_blob(new_sha))
+        disk2 = {p.stem for p in (s.root / "blobs").glob("*.wav")}
+        snap2 = {t["sha256"] for t in s.snapshot()["takes"]}
+        bak2 = {t["sha256"] for t in json.loads((s.root / "collection.json.bak").read_bytes())["takes"]}
+        self.assertEqual(disk2, snap2 | bak2)
 
     def test_no_pruning_in_conflict(self):
         a, b = self.store("a"), self.store("b")
@@ -370,6 +398,218 @@ class ZipTest(Base):
             b.import_zip(self.tmp / "notzip.zip")
         self.assertFalse((self.tmp / "evil.wav").exists())
         self.assertEqual(sorted(os.listdir(b.root / "blobs")), [])
+
+
+class FormatVersionTest(Base):
+    def test_future_primary_with_valid_backup_leaves_both_intact(self):
+        s = self.store("a")
+        self.take(s)
+        self.take(s)  # ensure .bak exists
+        main = s.root / "collection.json"
+        bak = s.root / "collection.json.bak"
+        main_bytes = main.read_bytes()
+        bak_bytes = bak.read_bytes()
+        future = dict(json.loads(main_bytes))
+        future["format_version"] = 99
+        main.write_bytes(json.dumps(future).encode())
+        # main is future, bak is valid older (v1)
+        with self.assertRaises(UnsupportedFormat):
+            Store(s.root, "a", catalog=self.catalog)
+        self.assertEqual(main.read_bytes(), json.dumps(future).encode())
+        self.assertEqual(bak.read_bytes(), bak_bytes)
+
+    def test_future_primary_without_backup_leaves_intact(self):
+        s = self.store("a")
+        self.take(s)
+        main = s.root / "collection.json"
+        bak = s.root / "collection.json.bak"
+        if bak.exists():
+            bak.unlink()
+        main_bytes = main.read_bytes()
+        future = dict(json.loads(main_bytes))
+        future["format_version"] = 2
+        fut_bytes = json.dumps(future).encode()
+        main.write_bytes(fut_bytes)
+        with self.assertRaises(UnsupportedFormat):
+            Store(s.root, "a", catalog=self.catalog)
+        self.assertEqual(main.read_bytes(), fut_bytes)
+        self.assertFalse(bak.exists())
+
+    def test_future_backup_propagates_as_unsupported(self):
+        s = self.store("a")
+        self.take(s)
+        self.take(s)
+        main = s.root / "collection.json"
+        bak = s.root / "collection.json.bak"
+        main.write_bytes(b"corrupt json {")
+        future = {"format_version": 99, "takes": [], "events": [], "pruned": []}
+        bak.write_bytes(json.dumps(future).encode())
+        bak_bytes = bak.read_bytes()
+        with self.assertRaises(UnsupportedFormat):
+            Store(s.root, "a", catalog=self.catalog)
+        self.assertEqual(bak.read_bytes(), bak_bytes)
+
+    def test_malformed_version_is_store_error_and_recoverable(self):
+        s = self.store("a")
+        self.take(s)
+        main = s.root / "collection.json"
+        bak = s.root / "collection.json.bak"
+        bad = {"format_version": "bad", "takes": [], "events": [], "pruned": []}
+        main.write_bytes(json.dumps(bad).encode())
+        if bak.exists():
+            bak.unlink()
+        with self.assertRaises(StoreError) as ctx:
+            Store(s.root, "a", catalog=self.catalog)
+        self.assertNotIsInstance(ctx.exception, UnsupportedFormat)
+        # With valid backup, malformed is recoverable
+        s2 = self.store("a2")
+        self.take(s2)
+        self.take(s2)
+        main2 = s2.root / "collection.json"
+        bak2 = s2.root / "collection.json.bak"
+        bak_bytes = bak2.read_bytes()
+        bad2 = dict(json.loads(main2.read_bytes()))
+        bad2["format_version"] = "bad"
+        main2.write_bytes(json.dumps(bad2).encode())
+        r = Store(s2.root, "a2", catalog=self.catalog)
+        self.assertIsNotNone(r.warning)
+        self.assertEqual(r.snapshot(), json.loads(bak_bytes))
+
+    def test_double_corrupt_preserves_files(self):
+        s = self.store("a")
+        self.take(s)
+        main = s.root / "collection.json"
+        bak = s.root / "collection.json.bak"
+        # Ensure bak exists
+        self.take(s, OTHER, activate=False)
+        main.write_bytes(b"{{ corrupt")
+        bak.write_bytes(b"{{ also corrupt")
+        main_b = main.read_bytes()
+        bak_b = bak.read_bytes()
+        blobs_before = sorted(p.read_bytes() for p in (s.root / "blobs").glob("*.wav"))
+        with self.assertRaises(StoreError):
+            Store(s.root, "a", catalog=self.catalog)
+        self.assertEqual(main.read_bytes(), main_b)
+        self.assertEqual(bak.read_bytes(), bak_b)
+        self.assertEqual(sorted(p.read_bytes() for p in (s.root / "blobs").glob("*.wav")), blobs_before)
+
+    def test_old_format_without_version_accepted(self):
+        s = self.store("a")
+        self.take(s)
+        main = s.root / "collection.json"
+        snap = json.loads(main.read_bytes())
+        snap.pop("format_version", None)
+        main.write_bytes(json.dumps(snap).encode())
+        r = Store(s.root, "a", catalog=self.catalog)
+        self.assertIsNotNone(r.active(LINE))
+
+
+class ZipBoundsTest(Base):
+    def test_entry_count_limit(self):
+        # Each entry individually valid, count exceeds bound
+        import hashlib, tf2reaudio.store as m
+        a, b = self.store("a"), self.store("b")
+        self.take(a)
+        # Build unique valid WAV blobs
+        blobs = {}
+        for freq in range(1000, 1010):
+            data = wav(freq)
+            sha = hashlib.sha256(data).hexdigest()
+            blobs[sha] = data
+        base_snap = a.snapshot()
+        # Limit to 4 so 1 json + 5 blobs exceeds
+        orig = m._MAX_ZIP_ENTRIES
+        m._MAX_ZIP_ENTRIES = 4
+        try:
+            path = self.tmp / "many.zip"
+            with zipfile.ZipFile(path, "w") as z:
+                z.writestr("collection.json", json.dumps(base_snap))
+                for sha, data in list(blobs.items())[:5]:
+                    z.writestr(f"blobs/{sha}.wav", data)
+            before = b.snapshot()
+            before_blobs = {p.read_bytes() for p in (b.root / "blobs").glob("*.wav")}
+            with self.assertRaises(StoreError):
+                b.import_zip(path)
+            self.assertEqual(b.snapshot(), before)
+            self.assertEqual({p.read_bytes() for p in (b.root / "blobs").glob("*.wav")}, before_blobs)
+            # Disabling limit must make it succeed
+            m._MAX_ZIP_ENTRIES = 10000
+            b.import_zip(path)
+        finally:
+            m._MAX_ZIP_ENTRIES = orig
+
+    def test_total_bytes_limit(self):
+        import hashlib, tf2reaudio.store as m
+        a, b = self.store("a"), self.store("b")
+        self.take(a)
+        blobs = {}
+        for freq in range(1100, 1110):
+            data = wav(freq)
+            sha = hashlib.sha256(data).hexdigest()
+            blobs[sha] = data
+        base_snap = a.snapshot()
+        # Each file_size <= limits, but sum exceeds
+        total = len(json.dumps(base_snap).encode()) + sum(len(d) for d in list(blobs.values())[:3])
+        orig = m._MAX_ZIP_TOTAL_BYTES
+        m._MAX_ZIP_TOTAL_BYTES = total - 1
+        try:
+            path = self.tmp / "big.zip"
+            with zipfile.ZipFile(path, "w") as z:
+                z.writestr("collection.json", json.dumps(base_snap))
+                for sha, data in list(blobs.items())[:3]:
+                    z.writestr(f"blobs/{sha}.wav", data)
+            before = b.snapshot()
+            with self.assertRaises(StoreError):
+                b.import_zip(path)
+            self.assertEqual(b.snapshot(), before)
+            m._MAX_ZIP_TOTAL_BYTES = 128 * 1024 * 1024
+            b.import_zip(path)
+        finally:
+            m._MAX_ZIP_TOTAL_BYTES = orig
+
+    def test_duplicate_rejected(self):
+        a, b = self.store("a"), self.store("b")
+        self.take(a)
+        path = self.tmp / "dup.zip"
+        snap = json.dumps(a.snapshot())
+        sha = a.snapshot()["takes"][0]["sha256"]
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("collection.json", snap)
+            z.writestr(f"blobs/{sha}.wav", a.blob(sha))
+            z.writestr(f"blobs/{sha}.wav", a.blob(sha))
+        before = b.snapshot()
+        with self.assertRaises(StoreError):
+            b.import_zip(path)
+        self.assertEqual(b.snapshot(), before)
+
+    def test_export_excludes_orphan_blob(self):
+        s = self.store("a")
+        self.take(s)
+        orphan = s.root / "blobs" / ("f" * 64 + ".wav")
+        orphan.write_bytes(wav(123))
+        path = self.tmp / "export.zip"
+        s.export_zip(path)
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+        self.assertNotIn("blobs/" + "f" * 64 + ".wav", names)
+
+    def test_non_hash_blobs_ignored_by_gc(self):
+        import hashlib
+        s = self.store("a")
+        self.take(s)
+        extra = s.root / "blobs" / "notes.wav"
+        extra.write_bytes(b"hello")
+        subdir = s.root / "blobs" / "subdir"
+        subdir.mkdir()
+        self.take(s)
+        self.take(s)
+        disk = {p.name for p in (s.root / "blobs").glob("*") if p.is_file()}
+        self.assertIn("notes.wav", disk)
+        # _present only returns hash-named wavs
+        self.assertNotIn("notes", s._present())
+        s._drop_blobs(set())
+        self.assertTrue(extra.exists())
+        self.assertTrue(subdir.exists())
 
 
 if __name__ == "__main__":

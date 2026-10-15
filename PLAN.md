@@ -11,7 +11,7 @@
 | Ola | Estado | Evidencia |
 |---|---|---|
 | **0 · Fundaciones** | **Hecha y en `master` (`ccb7a94`)** — T0–T10 + T7 aislado | `python -m unittest` 173 passed / 7 skipped (2026-10-13, Linux, Chromium opcional). CLI `doctor`/`import-wav`/`apply` funcionan contra fixtures. |
-| **1 · Uso local (web)** | **Candidato privado en disco, consolidación en curso** — T14–T17 + T19 candidato | Suite Linux con Chromium: 179 pruebas, OK, 2 omitidas. CSP de T14 integrado y comprobado en navegador; ZIP reproducible y arranque extraído verificados. Catálogo y audio original del VPK real comprobados en Linux. Sin validación de micrófono físico, reemplazos dentro del juego ni Windows. |
+| **1 · Uso local (web)** | **Candidato privado consolidado en `master` (`ac63a8d`), refuerzos T8 integrados** — T14–T17 + T19 candidato | Suite Linux con Chromium: 191 pruebas, OK, 2 omitidas. CSP de T14 y protección de colección T8 comprobados; ZIP reproducible y recorrido extraído con fixtures verificados. Catálogo y audio original del VPK real comprobados en Linux. Sin validación de micrófono físico, reemplazos dentro del juego ni Windows. |
 | **2 · Hito humano** | **Bloqueante y pendiente** | Requiere Windows 10/11 nativo + TF2 real en Casual mid-game (`snd_restart`). Sin esto no se autoriza Ola 3. Protocolo en `docs/milestone-wave2.md`. |
 | **3 · Colaboración** | **No iniciada** | Falta `group.py` (T11), `sync.py` (T12), `test_integration_sync.py` (T13), integración de `tunnel.py` y `web/group.js` (T18). |
 | **4 · Usuarios + a11y** | **No iniciada** | 5 personas nuevas, teclado/zoom 200%/lector — criterio: 4/5 completan MEDIC! sin ayuda. |
@@ -198,11 +198,11 @@ Lo ya previsto (Host check, `X-TF2RA`, `X-Frame-Options`, validación WAV/hash/c
 ### 13.5 Resiliencia, observabilidad y mantenimiento
 | Tema | Estado actual | Añadido recomendado |
 |---|---|---|
-| Migración de esquema | `PROTOCOL_VERSION=1`, `collection.json` sin versionado interno | Añadir `format_version` en `collection.json`/`group.json`; T8/T11 deben rechazar versiones futuras con mensaje claro y migrar versiones antiguas sin pérdida |
-| Corrupción doble (`json` + `.bak`) | Se recupera de `.bak` | Si ambos corruptos, renombrar a `.corrupt-<timestamp>` y arrancar colección vacía con aviso en UI + `doctor`, sin borrar blobs |
+| Migración de esquema | T8 integrado: `collection.json` usa `format_version=1`, acepta el formato anterior sin campo y rechaza versiones futuras sin modificar archivos | T11 debe aplicar la misma protección a `group.json` cuando se autorice la colaboración |
+| Corrupción doble (`json` + `.bak`) | T8 integrado: recuperación desde `.bak` válido; si ambos están dañados se conservan los archivos y audios y se muestra un error claro | Se mantiene la recuperación conservadora en lugar del reinicio vacío automático propuesto por la revisión, para evitar pérdida o confusión de datos |
 | Disco lleno / corte de corriente | `atomic_write+fsync+replace` cubre caso normal | Añadir pruebas de `ENOSPC` y corte a mitad de `atomic_write` antes de Ola 3; `doctor` debe reportar espacio libre en `data_dir()` |
 | Logs y diagnóstico | No hay log persistente | Escribir `data_dir()/logs/tf2reaudio.log` rotativo (p. ej. 1 MB, 3 archivos), sin secretos, con nivel INFO; `doctor --copy` lo adjunta opcionalmente |
-| Limpieza | Poda de tomas inactivas >5 | Añadir GC de blobs huérfanos y de `disabled_mod` antiguos, y test de que `export_zip` no incluye blobs huérfanos |
+| Limpieza | T8 integrado: poda de tomas inactivas >5; GC conserva audios referenciados por colección o respaldo válido, respeta archivos ajenos y exporta solo los referenciados | La limpieza de `disabled_mod` antiguo queda pendiente; no se elimina automáticamente contenido del usuario |
 | Dependencias externas | Python y cloudflared fijados | Documentar EOL de Python 3.12 y política de actualización de `cloudflared` (cuándo se cambia SHA y cómo se comunica) |
 | Actualización del juego | VPK puede cambiar con update de TF2 | `catalog.build` debe tolerar líneas nuevas/desaparecidas sin romper `store`; `doctor` avisa si `vo_index` del VPK no coincide con `vo_index.txt` del build |
 
