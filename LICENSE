@@ -19,15 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Third-party material not covered by this license:
-
-- tf2reaudio/web/img/*.png: Team Fortress 2 class artwork, (c) Valve Corporation.
-  See tf2reaudio/web/img/SOURCES.md.
-- tf2reaudio/web/fonts/*.ttf: Team Fortress 2 fonts (TF2 Build, TF2 Secondary),
-  (c) Valve Corporation. See tf2reaudio/web/fonts/SOURCES.md.
-
-Team Fortress 2 is a trademark of Valve Corporation. This project is not
-affiliated with or endorsed by Valve.

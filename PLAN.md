@@ -57,7 +57,7 @@ Source: `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c` plus uncommitted T8/T15 fixes
 |---|---|---|
 | Idioma UI | Solo inglés | Textos centralizados en `web/strings.js` para añadir es después sin reescribir. |
 | Distribución | ZIP con `TF2ReAudio.cmd` + `tf2reaudio.sh` | En Windows descarga Python embeddable oficial (SHA-256 fijado) si falta ≥3.10. Sin admin/winget. |
-| Visibilidad (decisión del usuario, 2026-10-15, revisada) | Repositorio público en GitHub con licencia MIT | El código es MIT; las imágenes y fuentes de Valve quedan fuera de la licencia (ver `LICENSE`). Releases/ZIP públicos siguen sin decidir. |
+| Visibilidad (decisión del usuario, 2026-10-15, revisada) | Repositorio público en GitHub con licencia MIT | El código es MIT; las imágenes y fuentes de Valve quedan fuera de la licencia (ver `NOTICE`). Releases/ZIP públicos siguen sin decidir. |
 | Prioridad de validación (decisión del usuario, 2026-10-15) | Hacer funcional y comprobar primero el recorrido local en Linux | Windows sigue sin probar y se pospone hasta estabilizar Linux; no impide corregir ni validar el uso local. El hito completo sigue pendiente antes de colaboración. |
 | Código | Paquete Python `tf2reaudio/`, solo stdlib | `__version__ = "0.1.0"`, `PROTOCOL_VERSION = 1`. Persistencia siempre vía `util.atomic_write`. |
 | Descarga futura | GitHub Releases + `GET /download` del host, pendiente de autorización futura | Por ahora se prepara el ZIP local; no se publica ni se habilita descarga pública. |
@@ -173,7 +173,7 @@ Esta sección no cambia decisiones vigentes; añade huecos detectados en la revi
 ### 13.1 Legal, licencia y cumplimiento con Valve
 | Hueco | Por qué importa | Qué añadir al plan |
 |---|---|---|
-| `LICENSE` MIT añadida (2026-10-15) | Las imágenes y fuentes de Valve no se pueden relicenciar | `LICENSE` las excluye explícitamente; revisar si Valve objeta su redistribución |
+| `LICENSE` MIT añadida (2026-10-15) | Las imágenes y fuentes de Valve no se pueden relicenciar | `NOTICE` las excluye explícitamente; revisar si Valve objeta su redistribución |
 | ToS de Steam / VAC | No se ha verificado una garantía de compatibilidad ni aprobación de Valve | Describir el comportamiento verificable: reemplaza audio local bajo `tf/custom` sin modificar binarios. No prometer seguridad frente a VAC ni aprobación de Valve |
 | Uso de `vo_index.txt` y referencia externa | El plan cita `robbilookatme/tf2-voice-pack-reference` sin licencia; riesgo de copiar datos no licenciados | Mantener regla ya escrita en T5 (solo verificación manual) y auditar que ningún fixture/strings copie transcripciones |
 
