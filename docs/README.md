@@ -1,86 +1,93 @@
-# TF2 Re-Audio — private local-test candidate
+# TF2 Re-Audio
 
-Private candidate for local review; no public release is available.
-
-Record custom TF2 voices on your computer. This candidate supports solo use;
-group sharing is still pending. Windows, real microphones, and the effect of
-reloading sounds during a real TF2 match still need human testing. See
-[the validation report](docs/local-ui-review.md) and
-[the Linux/Windows checklist](docs/milestone-wave2.md).
+Give your favorite TF2 classes your own voice. Record a line, listen, and try it in the game.
+No account needed. Your recordings stay on your computer.
 
 ## Start
 
-1. Extract the ZIP into a writable folder; do not run it inside the ZIP viewer.
-2. On Windows 10/11 (64 bit), double-click `TF2ReAudio.cmd`. It uses Python 3.10
-   or newer, or downloads the official Python runtime with its pinned checksum.
-   On Linux, run `./tf2reaudio.sh`; if needed, first run `chmod +x tf2reaudio.sh`.
-3. Keep the launcher window open. The app opens locally in your browser.
-4. If TF2 is not detected, enter your **Team Fortress 2** folder, or its `tf`
-   subfolder. The app validates the folder before saving it.
-5. Choose Soldier, then **Start with MEDIC!**. Test or select your microphone,
-   click **Start recording**, then **Stop** (the limit is 10 seconds).
-6. Listen, optionally disable silence trimming, and **Save recording**.
-   The recorder shows which game files it will replace. Your microphone stops
-   when you stop recording or close the recorder, including with Escape.
-7. Restart TF2 once after the mod folder is first created. Press E as Soldier
-   to check your voice. Subsequent changes can use **Apply**, if RCON is set up.
+1. Extract the whole ZIP into a folder.
+2. **Windows 10/11 (64-bit):** double-click `TF2ReAudio.cmd`.
+   **Linux:** open a terminal in that folder and run `sh tf2reaudio.sh`.
+3. The app opens in your browser. Keep the launcher window open.
 
-Only your PC's local files are used while the game plays audio. Recording and
-backups work without a group account. Browser microphone permission is needed.
+You'll need TF2 installed, a microphone, and a browser with microphone support.
+Windows downloads Python if needed on the first launch. Linux needs Python 3.10 or newer.
 
-## Optional TF2 connection
+## Your first recording
 
-Open **Setup & settings**, check the RCON port, and click **Copy launch options**.
-In Steam → Team Fortress 2 → Properties → General, add these at the end of
-**Launch Options**, keeping your existing options. If copying is unavailable,
-select and copy the text shown in the app. Restart TF2 and click **Check
-connection**. If TF2 is closed or connection fails, your recordings remain saved;
-close and reopen TF2 to load the installed files. An apply request does not
-prove that the new voice was heard in the game.
+1. Choose **Start solo**. If TF2 isn't found, enter your **Team Fortress 2** folder.
+2. Pick **Soldier** → **Start with MEDIC!**. Allow microphone access when asked.
+3. Click **Start recording**, then **Stop**. Listen and click **Save recording**.
+4. Restart TF2, play as Soldier, and press **E**.
 
-## Recover a voice and make backups
+Want the original voices back? In **Setup & settings**, choose **Disable voices**,
+then restart TF2. Your recordings stay saved. Use **Enable voices** to bring them back.
 
-- **Play original** only previews the original; it does not change your selection.
-- **Use original on my PC only** overrides a line locally. Switch back with
-  **Use collection voice on my PC**.
-- **Restore original for this collection** changes that line's selection.
-  **Undo last change** restores the previous selection. Sharing is not enabled.
-- **History** lets you listen before selecting an older recording. If imported
-  collections conflict, both recordings remain available; select one in History
-  to resolve the conflict.
-- **Details & variants** lists technical filenames and supports recording or
-  restoring individual variants. Variant edits remain separate from whole-line
-  edits; restore an edited variant separately if you want all originals.
-- **Setup & settings → Export collection** downloads a backup ZIP.
-  **Import collection ZIP** merges a backup with the existing collection.
+## More help
 
-## Update
+<details>
+<summary><strong>Try changes without restarting TF2</strong></summary>
 
-Close the app, extract the new program ZIP, and launch the new version.
-Your recordings live outside the program folder and survive replacing it.
-Back up your collection before an update.
+Restart TF2 once after your first recording. After that, you can set up the optional connection:
 
-## Disable or uninstall
+1. Open **Setup & settings** → **Copy launch options**.
+2. In Steam, open **Team Fortress 2 → Properties → General → Launch Options**.
+   Add the copied text at the end, keeping your existing options.
+3. Restart TF2 and click **Check connection** in the app.
+4. Use **Apply changes** after saving new recordings, then listen in TF2.
 
-In **Setup & settings**:
+Keep these launch options private: they include your local connection password.
+You can also keep using the app without this connection and restart TF2 to load changes.
 
-1. **Disable voices** moves the mod out of TF2 without deleting recordings.
-   Use **Enable voices** to bring it back. Restart TF2 to unload or load it.
-2. **Delete collection** permanently removes local recordings and the installed
-   mod. Export a backup first. The app asks before deleting anything.
-3. **Uninstall** removes the mod, optionally deletes the collection, and shows
-   the exact launch options to remove from Steam. Keep all your other options.
-   Close the app and delete its program folder. To remove remaining local data,
-   delete `%APPDATA%\TF2ReAudio` on Windows or `$XDG_DATA_HOME/tf2reaudio` on Linux
-   (normally `~/.local/share/tf2reaudio`). Restart TF2 to unload the mod.
+</details>
 
-## If something fails
+<details>
+<summary><strong>Restore a voice or save a backup</strong></summary>
 
-Keep the launcher window open and retry. Allow microphone access for the local
-page in your browser. If TF2 is not writable or locks sound files, close TF2 and
-retry. **Setup & settings** can remove the old `tf2reaudio_test` experimental mod.
+Open **More: history, undo, variants** on a voice line to find its restore options.
+**Use original on my PC only** switches that line back to TF2's voice.
+Choose **Use collection voice on my PC** to return to your recording.
+**History** lets you listen to older recordings and choose one.
+If you edited individual variants, restore those separately too.
 
-From the extracted folder, run `TF2ReAudio.cmd doctor --copy` on Windows or
-`./tf2reaudio.sh doctor --copy` on Linux. The report omits RCON passwords and
-other secrets. See [launcher troubleshooting](docs/launchers.md). Do not send
-your copied launch options to others: they contain the local RCON password.
+In **Setup & settings**, use **Export collection** to save a backup ZIP.
+Use **Import collection ZIP** to bring recordings back; it merges them with your current collection.
+
+</details>
+
+<details>
+<summary><strong>Update or uninstall</strong></summary>
+
+**Update:** export a backup, close the app, extract the new program ZIP into a new folder,
+and launch it. Recordings are stored separately from the program folder.
+
+**Uninstall:** open **Setup & settings → Uninstall** and follow the steps shown.
+Keep a backup of recordings you want to save. Only select **Also delete my local collection**
+if you want to permanently delete your recordings. Close the app and delete its program folder.
+
+Data is stored in `%APPDATA%\TF2ReAudio` on Windows, or
+`$XDG_DATA_HOME/tf2reaudio` on Linux (usually `~/.local/share/tf2reaudio`).
+
+</details>
+
+<details>
+<summary><strong>Something isn't working?</strong></summary>
+
+- **No microphone?** Allow microphone access in your browser and check the selected input.
+- **TF2 wasn't found?** Enter the **Team Fortress 2** folder or its `tf` subfolder in **Setup & settings**.
+- **Voice hasn't changed?** Close and reopen TF2. If the app couldn't write a sound file, close TF2 and try **Apply changes** again.
+- **App won't open?** Check that the whole ZIP was extracted and keep the launcher window open to read its message.
+
+For a help report, open a terminal in the program folder and run:
+
+- **Windows:** `TF2ReAudio.cmd doctor --copy`
+- **Linux:** `sh tf2reaudio.sh doctor --copy`
+
+The report leaves out passwords and tokens.
+See [launcher help](https://github.com/135Andres/TF2-Re-Audio/blob/main/docs/launchers.md)
+or [report an issue](https://github.com/135Andres/TF2-Re-Audio/issues).
+
+</details>
+
+This early version supports solo use. Group sharing is planned. Voices have been tested
+in TF2 on Linux; Windows testing is still pending.
