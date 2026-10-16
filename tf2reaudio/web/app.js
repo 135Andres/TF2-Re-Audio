@@ -13,6 +13,7 @@
           }
         });
       } catch {
+        Diagnostics.emit("api_request", "failed", "backend_unreachable");
         throw new Error(STRINGS.networkFailed);
       }
       const type = response.headers.get("content-type") || "";
@@ -41,6 +42,10 @@
     el.textContent = message;
     el.className = `notice ${kind}`;
     el.hidden = false;
+  }
+  function previewFailed() {
+    Diagnostics.emit("preview", "failed", "preview_failed");
+    notice(STRINGS.playHelp);
   }
   function on(selector, action) {
     $(selector).onclick = async event => {
@@ -378,7 +383,7 @@
       holder.append(player(audio));
     }
     audio.src = url;
-    return audio.play().catch(() => notice(STRINGS.playHelp));
+    return audio.play().catch(previewFailed);
   }
   // Replaces the browser's native audio controls with a play button, seek bar and time.
   function player(audio) {
@@ -406,7 +411,7 @@
     };
     for (const event of ["play", "pause", "timeupdate", "durationchange", "ended", "emptied"]) audio.addEventListener(event, update);
     audio.addEventListener("ended", () => { audio.currentTime = 0; });
-    toggle.onclick = () => audio.paused ? audio.play().catch(() => notice(STRINGS.playHelp)) : audio.pause();
+    toggle.onclick = () => audio.paused ? audio.play().catch(previewFailed) : audio.pause();
     seek.oninput = () => { if (audio.duration) audio.currentTime = seek.value / 1000 * audio.duration; };
     wrap.append(audio, toggle, seek, time);
     update();

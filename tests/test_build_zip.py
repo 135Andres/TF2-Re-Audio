@@ -73,7 +73,18 @@ class ReleaseArchiveTest(unittest.TestCase):
                                         text=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertTrue(result.stdout.strip())
-            if os.name != "nt":
+            with zipfile.ZipFile(output) as archive:
+                names = set(archive.namelist())
+            self.assertLessEqual({"tf2reaudio/diagnostics.py", "tf2reaudio/web/diagnostics.js", "docs/launchers.md"}, names)
+            self.assertFalse([n for n in names if re.search(r"(^|/)(logs|reports)/|\.jsonl|diagnostics-.*\.zip", n)])
+            if os.name != "nt":  # HOME isolation keeps Steam discovery away from a real TF2 (Windows uses the registry)
+                bundle_env = {**env, "HOME": str(folder / "home"), "XDG_DATA_HOME": str(folder / "data with spaces")}
+                result = subprocess.run([sys.executable, "-m", "tf2reaudio", "doctor", "--bundle"], cwd=extracted,
+                                        env=bundle_env, capture_output=True, text=True, encoding="utf-8", timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                saved = Path(result.stdout.split("Diagnostic report saved to: ")[1].splitlines()[0])
+                with zipfile.ZipFile(saved) as archive:
+                    self.assertIn("tf2: not_found", archive.read("summary.txt").decode("utf-8"))
                 result = subprocess.run(["sh", str(extracted / "tf2reaudio.sh"), "--version"],
                                         cwd=folder, env=env, capture_output=True,
                                         text=True, encoding="utf-8", timeout=30)

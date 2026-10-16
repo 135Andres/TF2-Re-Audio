@@ -29,6 +29,16 @@ then restart TF2. Your recordings stay saved. Use **Enable voices** to bring the
 
 Group sharing is currently a development preview; older ZIPs may support only solo use. Keep internet hosting off until the pending P0 security work is completed. Read the [sharing guide](https://github.com/135Andres/TF2-Re-Audio/blob/main/docs/group-sharing.md) for setup, privacy and invitation details, and the [Windows checklist](https://github.com/135Andres/TF2-Re-Audio/blob/main/docs/windows-security-checklist.md) for the planned native tests.
 
+## Reporting a problem
+
+1. Reproduce the problem once.
+2. Open **Setup & settings → Diagnostics**, choose the step you tested and what happened, then press **Download diagnostic report**.
+3. Send the `TF2ReAudio-diagnostics-….zip` to the maintainer yourself, with the steps you followed. Nothing is uploaded automatically.
+
+The report holds status codes only: no recordings, passwords, invitation codes, links, names or folder paths.
+
+If the page will not open, run `TF2ReAudio.cmd doctor --bundle` (Windows) or `sh tf2reaudio.sh doctor --bundle` (Linux); it prints where the ZIP was saved. If the launcher stops before the app starts, send the code shown in brackets, such as `[BOOT_DOWNLOAD]`, and the last step you saw.
+
 ## More help
 
 <details>

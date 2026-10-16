@@ -2,12 +2,15 @@ import argparse
 import json
 import platform
 import re
+import secrets
 import sys
 import uuid
 from pathlib import Path
 
 from . import __version__, catalog, steam
 from .audio import InvalidWav
+from .diagnostics import (DiagnosticRecorder, DiagnosticsError, base_checks, build_bundle, error_code,
+                          save_bundle)
 from .game import MOD_DIR, TEST_MOD_DIR, Game
 from .rcon import RconError
 from .server import ServerError, run_local
@@ -97,8 +100,10 @@ def cmd_doctor(args) -> int:
         f"OS: {platform.platform()}",
         f"Data folder: {data_dir()}",
     ]
+    checks = base_checks("cli")  # structured, path-free twin of the text report
     installs = steam.find_installs()
     lines.append(f"TF2 installs found by Steam: {len(installs)}")
+    checks["tf2"] = "unusable" if installs else "not_found"
     for tf in installs:
         check = steam.check_install(tf)
         lines.append(f"  - {tf}: {'OK' if check.ok else check.problem} ({check.detail})")
@@ -109,29 +114,48 @@ def cmd_doctor(args) -> int:
     try:
         tf = pick_tf(args.tf)
         lines.append(f"Using TF2 at: {tf}")
+        checks["tf2"] = "ok"
         names, cat = load_catalog(tf)
+        checks["voice_files"] = len(names)
+        checks["catalog_lines"] = sum(len(cat.lines(c)) for c in catalog.CLASSES)
         lines.append(f"Voice file archive: readable ({len(names)} files)")
         lines.append(f"Voice line catalog: {sum(len(cat.lines(c)) for c in catalog.CLASSES)} lines")
         mod = "present" if (tf / "custom" / MOD_DIR).is_dir() else "not created yet"
         lines.append(f"Mod folder (custom/{MOD_DIR}): {mod}")
+        checks["mod_folder"] = mod == "present"
         store = Store(data_dir() / "collection", device_id(), catalog=cat)
+        checks["collection_warning"] = bool(store.warning)
         if store.warning:
             lines.append(f"Collection: {store.warning}")
         game = Game(tf, store, cat)
         test = "present (remove it with `setup --remove-test-mod`)" if game.test_mod_present() else "not present"
         lines.append(f"Phase 0 test folder (custom/{TEST_MOD_DIR}): {test}")
+        checks["test_mod"] = game.test_mod_present()
         status = game.status()
         lines.append(f"RCON: {RCON_STATUS.get(status, status)}")
-        lines.append(f"Changes waiting for apply: {game.pending_apply()} files")
+        checks["rcon"] = status if status in RCON_STATUS else "unknown"
+        checks["pending_apply"] = game.pending_apply()
+        lines.append(f"Changes waiting for apply: {checks['pending_apply']} files")
         ok = True
     except (Problem, OSError, VpkError, StoreError, RconError) as e:
         lines.append(f"Problem: {e}")
+        args.diag_code = f"tf2_{checks['tf2']}" if checks["tf2"] != "ok" else error_code(e)
+        DiagnosticRecorder(data_dir()).record("cli", "tf2_detection", "failed", args.diag_code, error=e)
     report = "\n".join(lines) + "\n"
     print(report, end="")
     if args.copy:
         path = data_dir() / "doctor-report.txt"
         atomic_write(path, report.encode("utf-8"))
         print(f"Report saved to: {path}")
+    if args.bundle:
+        # Missing TF2 is a finding, not a failure: the bundle exists to explain it.
+        diag = DiagnosticRecorder(data_dir())
+        diag.record("cli", "doctor", "ok" if ok else "failed", "ok" if ok else args.diag_code)
+        path = save_bundle(data_dir(), build_bundle(diag.snapshot(), checks, []))
+        print(f"Diagnostic report saved to: {path}")
+        print("Send this ZIP to the maintainer. It contains no recordings, passwords or folder paths.")
+        args.diag_code = "ok"
+        return 0
     return 0 if ok else 1
 
 
@@ -185,6 +209,7 @@ def cmd_import_wav(args) -> int:
 def cmd_apply(args) -> int:
     result = open_game(args.tf).apply()
     print(APPLY_RESULT[result])
+    args.diag_code = {"sent": "ok", "not_running": "game_closed", "auth_failed": "rcon_auth_failed"}.get(result, "rcon_error")
     return 0 if result == "sent" else 1
 
 
@@ -225,6 +250,8 @@ def main(argv=None):
     p = sub.add_parser("doctor", help="Check your setup and print a report (no passwords)")
     p.add_argument("--tf", help=tf_help)
     p.add_argument("--copy", action="store_true", help="also save the report to a text file")
+    p.add_argument("--bundle", action="store_true",
+                   help="save a shareable diagnostic ZIP (no recordings, passwords or folder paths)")
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("setup", help="Show the Steam launch options and how to add them")
@@ -253,11 +280,29 @@ def main(argv=None):
         parser.print_help()
         return 2
     try:
-        return args.func(args)
-    except (Problem, ServerError, VpkError, StoreError, RconError) as e:
+        diag = DiagnosticRecorder(data_dir())
+    except OSError as e:
+        print(f"Error: can't open the data folder: {e.strerror or e}", file=sys.stderr)
+        return 1
+    action, op = args.command.replace("-", "_"), secrets.token_hex(8)
+    diag.record("cli", action, "start", "started", operation_id=op)
+    rc, error = 1, None
+    try:
+        rc = args.func(args)
+        return rc
+    except (Problem, ServerError, VpkError, StoreError, RconError, DiagnosticsError) as e:
+        error = e
         print(f"Error: {e}", file=sys.stderr)
     except OSError as e:
+        error = e
         print(f"Error: {e.strerror or e}{f' ({e.filename})' if e.filename else ''}", file=sys.stderr)
+    except Exception as e:
+        error = e
+        print(f"Error: unexpected problem ({type(e).__name__}). Run `doctor --bundle` and send the report.",
+              file=sys.stderr)
+    finally:
+        code = error_code(error) if error else getattr(args, "diag_code", "ok" if rc == 0 else "unexpected_error")
+        diag.record("cli", action, "ok" if error is None and rc == 0 else "failed", code, operation_id=op, error=error)
     return 1
 
 

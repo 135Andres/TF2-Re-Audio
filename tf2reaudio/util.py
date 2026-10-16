@@ -47,3 +47,51 @@ def set_low_priority() -> None:
             os.nice(10)
     except Exception:
         pass
+
+
+class InstanceLock:
+    """OS-managed lifetime lock; released even after a process crash.
+
+    The empty lock file is never replaced or unlinked: all processes must lock
+    the same inode. It contains no persistent application data.
+    """
+
+    def __init__(self, root, name="instance.lock"):
+        path = Path(root, name)
+        if not path.exists():
+            atomic_write(path, b"0")
+        self.file = path.open("r+b")
+        if self.file.seek(0, 2) == 0:
+            self.file.write(b"0")
+            self.file.flush()
+        self.file.seek(0)
+        self.acquired = False
+
+    def acquire(self):
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        self.acquired = True
+        return True
+
+    def release(self):
+        if self.acquired:
+            if sys.platform == "win32":
+                import msvcrt
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)
+        self.acquired = False
+
+    def close(self):
+        self.release()
+        self.file.close()

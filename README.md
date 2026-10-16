@@ -11,7 +11,7 @@ Solo recordings stay on your computer. Group recordings are shared only after yo
 
 ## Get started
 
-1. **[Download TF2ReAudio-0.1.0.zip](https://github.com/135Andres/TF2-Re-Audio/releases/download/v0.1.0/TF2ReAudio-0.1.0.zip)** and extract it into a folder.
+1. **[Download TF2ReAudio-0.1.1.zip](https://github.com/135Andres/TF2-Re-Audio/releases/download/v0.1.1/TF2ReAudio-0.1.1.zip)** and extract it into a folder.
 2. **Open the app:**
    - **Windows 10/11 (64-bit):** double-click `TF2ReAudio.cmd`.
    - **Linux:** open a terminal in the extracted folder and run `sh tf2reaudio.sh`.
@@ -34,7 +34,7 @@ See the [short user guide](docs/README.md) when you need it.
 
 **Both you and your friend must have TF2 Re-Audio installed on your own PCs**, using the same collaboration-enabled build. Each PC also needs TF2 to hear the shared replacements. An invite does not install the app, and other people in your match will not hear your recordings automatically.
 
-The preview workflow is **Group → Create group → Host for the group → Share invite**; your friend opens **Group → Join a group**. Version 0.1.0 includes the collaboration preview; both participants should use the same release. **Internet hosting should stay off until the pending P0 security work is completed.** See the [sharing guide](docs/group-sharing.md), [security plan](docs/security-next-steps.md) and [Windows checklist](docs/windows-security-checklist.md).
+The preview workflow is **Group → Create group → Host for the group → Share invite**; your friend opens **Group → Join a group**. Version 0.1.1 includes the collaboration preview; both participants should use the same release. **Internet hosting should stay off until the pending P0 security work is completed.** See the [sharing guide](docs/group-sharing.md), [security plan](docs/security-next-steps.md) and [Windows checklist](docs/windows-security-checklist.md).
 
 <details>
 <summary><strong>Need a hand?</strong></summary>

@@ -4,10 +4,12 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
 from tf2reaudio import util
+from tf2reaudio.util import InstanceLock
 from tf2reaudio.__main__ import main
 from tests.fixtures.make_vpk import make_vpk
 from tests.test_mp3 import as_installed
@@ -95,6 +97,64 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("TF2 installs found by Steam: 0", out)
         self.assertIn("--tf", out)
+
+    def bundle(self, out):
+        line = next(l for l in out.splitlines() if l.startswith("Diagnostic report saved to: "))
+        path = Path(line.removeprefix("Diagnostic report saved to: "))
+        with zipfile.ZipFile(path) as archive:
+            return path, {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
+
+    def test_doctor_bundle_without_tf2_and_copy_still_works(self):
+        with mock.patch("tf2reaudio.steam.find_installs", return_value=[]):
+            code, out, err = self.run_cli("doctor", "--bundle", "--copy")
+        self.assertEqual(code, 0, err)
+        self.assertTrue((self.data / "doctor-report.txt").is_file())
+        path, files = self.bundle(out)
+        self.assertEqual(path.parent, self.data / "reports")
+        self.assertEqual(set(files), {"summary.txt", "manifest.json", "events.jsonl", "test-results.json"})
+        self.assertIn("tf2: not_found", files["summary.txt"])
+        self.assertIn("(tf2_not_found", files["summary.txt"])
+        self.assertIn("Next check: Choose the Team Fortress 2 folder", files["summary.txt"])
+        for text in files.values():
+            for secret in (PW, str(self.tmp), str(self.data), str(self.tf)):
+                self.assertNotIn(secret, text)
+
+    def test_doctor_bundle_runs_while_app_holds_its_lock(self):
+        lock = InstanceLock(self.data)
+        self.assertTrue(lock.acquire())
+        try:
+            code, out, err = self.run_cli("doctor", "--bundle")
+        finally:
+            lock.close()
+        self.assertEqual(code, 0, err)
+        _, files = self.bundle(out)
+        self.assertIn("tf2: ok", files["summary.txt"])
+        self.assertIn('"rcon": "not_configured"', files["test-results.json"])
+
+    def test_doctor_bundle_denied_prints_readable_error(self):
+        with mock.patch("tf2reaudio.diagnostics.atomic_write", side_effect=PermissionError(13, "Permission denied")):
+            code, out, err = self.run_cli("doctor", "--bundle")
+        self.assertEqual(code, 1)
+        self.assertIn("Error: Could not save the diagnostic report: Permission denied.", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_unexpected_error_is_recorded_without_traceback(self):
+        with mock.patch("tf2reaudio.__main__.cmd_lines", side_effect=RuntimeError(PW)):
+            code, out, err = self.run_cli("lines", "soldier")
+        self.assertEqual(code, 1)
+        self.assertIn("unexpected problem (RuntimeError)", err)
+        self.assertNotIn(PW, err)
+        self.assertNotIn("Traceback", err)
+        log = (self.data / "logs" / "events.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(PW, log)
+        last = json.loads(log.splitlines()[-1])
+        self.assertEqual((last["action"], last["outcome"], last["code"], last["error"]["type"]),
+                         ("lines", "failed", "unexpected_error", "RuntimeError"))
+
+    def test_apply_failure_has_stable_code(self):
+        self.run_cli("apply")
+        last = json.loads((self.data / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual((last["action"], last["outcome"], last["code"]), ("apply", "failed", "game_closed"))
 
     # ---- setup ----
 

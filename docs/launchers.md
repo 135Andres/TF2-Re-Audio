@@ -95,6 +95,23 @@ Until `run` is implemented, a "good" result ends with `Not implemented yet`, the
 
 **Send back:** your Windows version (`winver`), the result of each step, whether SmartScreen appeared, and screenshots of anything unexpected.
 
+## Failure codes
+
+Every launcher failure starts with a code in brackets. Testers send the code and the last step they saw; a screenshot helps if personal folder names are hidden. The launcher never writes log files, because setup output can contain passwords.
+
+| Code | Meaning |
+|---|---|
+| `BOOT_FOLDER` | The launcher's own folder could not be opened. |
+| `BOOT_NOT_EXTRACTED` | The ZIP was not fully extracted. |
+| `BOOT_PYTHON_MISSING` | Linux: Python 3.10+ is missing. (Windows downloads it instead.) |
+| `BOOT_DOWNLOAD` | Windows: downloading Python failed. |
+| `BOOT_HASH` | Windows: the downloaded Python did not match the pinned SHA-256. |
+| `BOOT_EXTRACT` | Windows: Python could not be unpacked (folder not writable). |
+| `BOOT_IMPORT` | Windows: Python was unpacked but could not import the app. |
+| `BOOT_APP_EXIT` | Python started and the app exited with an error. Run `doctor --bundle` for a diagnostic ZIP. |
+
+Once Python works, `doctor --bundle` saves a shareable diagnostic ZIP under the data folder's `reports` folder (the newest three are kept) even when TF2 is missing. Errors before Python starts, and Python syntax or import failures before diagnostics start, are not recorded automatically.
+
 ## Known limits
 
 - Windows: only 64-bit (amd64). Windows on ARM should run it through emulation, but nobody has tested that. 32-bit Windows is not supported.

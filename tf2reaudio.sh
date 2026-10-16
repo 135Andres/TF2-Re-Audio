@@ -36,16 +36,16 @@ install_hint() {
     esac
 }
 
-cd "$here" || fail "ERROR: Could not open the folder of this launcher: $here"
-[ -f tf2reaudio/__main__.py ] || fail "ERROR: The \"tf2reaudio\" folder was not found next to tf2reaudio.sh.
+cd "$here" || fail "ERROR [BOOT_FOLDER]: Could not open the folder of this launcher: $here"
+[ -f tf2reaudio/__main__.py ] || fail "ERROR [BOOT_NOT_EXTRACTED]: The \"tf2reaudio\" folder was not found next to tf2reaudio.sh.
 Extract the whole ZIP first, then run tf2reaudio.sh from the extracted folder."
 
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
     if command -v python3 >/dev/null 2>&1; then
-        msg="ERROR: TF2 Re-Audio needs Python 3.10 or newer, but python3 is $(python3 -V 2>&1).
+        msg="ERROR [BOOT_PYTHON_MISSING]: TF2 Re-Audio needs Python 3.10 or newer, but python3 is $(python3 -V 2>&1).
 Update Python (or your distribution), for example:"
     else
-        msg="ERROR: Python 3 was not found. Install it, for example:"
+        msg="ERROR [BOOT_PYTHON_MISSING]: Python 3 was not found. Install it, for example:"
     fi
     fail "$msg
 $(install_hint)
@@ -56,4 +56,5 @@ fi
 [ "$#" -eq 0 ] && set -- run
 python3 -m tf2reaudio "$@"
 rc=$?
-[ "$rc" -eq 0 ] || fail "TF2 Re-Audio stopped with error code $rc. Read the message above."
+[ "$rc" -eq 0 ] || fail "ERROR [BOOT_APP_EXIT]: TF2 Re-Audio stopped with error code $rc. Read the message above.
+For help, run \"sh tf2reaudio.sh doctor --bundle\" and send the ZIP it creates."

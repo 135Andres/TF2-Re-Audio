@@ -96,9 +96,35 @@ class WebTest(unittest.TestCase):
 
     def test_group_host_generates_local_join_link(self):
         from unittest.mock import PropertyMock
-        with patch("tf2reaudio.server.Tunnel.start", return_value="https://friends.example"), \
+        with patch("tf2reaudio.server.Tunnel.start", return_value="https://friends-test.trycloudflare.com"), \
              patch("tf2reaudio.server.Tunnel.running", new_callable=PropertyMock, return_value=True):
             self.browser("group-host")
+
+    def test_diagnostics_report_download_and_offline_fallback(self):
+        self.browser("diagnostics")
+        import json
+        import zipfile
+        with zipfile.ZipFile(self.root / "report.zip") as archive:
+            self.assertEqual(set(archive.namelist()), {"summary.txt", "manifest.json", "events.jsonl", "test-results.json"})
+            files = {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
+        self.assertLessEqual((self.root / "report.zip").stat().st_size, 2097152)
+        self.assertIn("microphone: failed (permission_denied)", files["summary.txt"])
+        self.assertIn("heard_in_tf2: not_tested", files["summary.txt"])
+        self.assertIn("browser_family: chrome", files["summary.txt"])
+        events = [json.loads(line) for line in files["events.jsonl"].splitlines()]
+        browser = {(e["action"], e["outcome"], e["code"]) for e in events if e["component"] == "browser"}
+        self.assertLessEqual({("capabilities", "ok", "capabilities_detected"),
+                              ("microphone", "unsupported", "feature_unavailable"),
+                              ("microphone", "failed", "permission_denied"),
+                              ("js_error", "failed", "unexpected_js_error"),
+                              ("microphone", "failed", "device_missing")}, browser)
+        fallback = json.loads((self.root / "browser.json").read_text(encoding="utf-8"))
+        self.assertEqual(fallback["kind"], "browser-only")
+        self.assertIn("doctor --bundle", fallback["note"])
+        self.assertTrue(any(e["code"] == "permission_denied" for e in fallback["events"]))
+        for text in [*files.values(), (self.root / "browser.json").read_text(encoding="utf-8")]:
+            for secret in ("Alice", "secret", "#frag", "evil", "TF2-ABCD", self.tmp.name):
+                self.assertNotIn(secret, text)
 
     def test_group_invitation_paste_fallback(self):
         self.browser("group-paste")
@@ -236,6 +262,40 @@ const path = require('node:path');
       assert.equal(errors.length, 0, errors.join('\n'));
       return;
     }
+    if (process.env.TF2RA_CASE === 'diagnostics') {
+      await page.evaluate(async () => {
+        const saved = window.MediaRecorder;
+        delete window.MediaRecorder;
+        await new Recorder(() => {}, () => {}).test();
+        window.MediaRecorder = saved;
+        navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('secret Alice mic', 'NotAllowedError'); };
+        await new Recorder(() => {}, () => {}).test();
+        Diagnostics.emit('microphone', 'failed', 'device_missing', {label: 'Alice mic', route: 'https://evil/#frag', count: 2});
+        Diagnostics.emit('microphone', 'failed', 'TF2-ABCD secret');
+        setTimeout(() => { throw new Error('secret https://evil/#frag'); });
+      });
+      await page.waitForTimeout(500);
+      await page.getByRole('button', {name:'Setup & settings', exact:true}).click();
+      await page.getByLabel('Step you tested').selectOption('microphone');
+      await page.getByLabel('What happened').selectOption('failed');
+      await page.getByLabel('Reason (optional)').selectOption('permission_denied');
+      await page.locator('#diagnostics-export').focus();
+      let download = page.waitForEvent('download');
+      await page.keyboard.press('Enter');
+      download = await download;
+      assert.match(download.suggestedFilename(), /^TF2ReAudio-diagnostics-\d{8}T\d{6}Z-[0-9a-f]{6}\.zip$/);
+      await download.saveAs(path.join(process.env.TF2RA_TEMP, 'report.zip'));
+      await page.waitForFunction(() => /downloaded/.test(document.querySelector('#diagnostics-message').textContent));
+      await page.route('**/api/diagnostics/**', route => route.abort());
+      download = page.waitForEvent('download');
+      await page.locator('#diagnostics-export').click();
+      download = await download;
+      assert.match(download.suggestedFilename(), /^TF2ReAudio-browser-report-\d{8}T\d{6}Z\.json$/);
+      await download.saveAs(path.join(process.env.TF2RA_TEMP, 'browser.json'));
+      assert.match(await page.locator('#diagnostics-message').textContent(), /browser-only/i);
+      assert.deepEqual(errors, ['secret https://evil/#frag']);
+      return;
+    }
     if (process.env.TF2RA_CASE === 'group-paste') {
       await page.getByRole('button', {name:'Group', exact:true}).click();
       const dialog = page.locator('#group-dialog');
@@ -274,7 +334,7 @@ const path = require('node:path');
         const invitation = await dialog.locator('#group-invitation').inputValue();
         const link = new URL(invitation.split('\n')[0]);
         assert.equal(link.origin, 'http://127.0.0.1:8440');
-        assert.equal(link.hash, '#join?host=https%3A%2F%2Ffriends.example');
+        assert.equal(link.hash, '#join?host=https%3A%2F%2Ffriends-test.trycloudflare.com');
         assert.match(invitation, /TF2-/);
         assert(!link.href.includes('TF2-'));
       }

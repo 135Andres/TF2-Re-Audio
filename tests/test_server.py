@@ -6,6 +6,7 @@ import sys
 from contextlib import redirect_stdout
 import tempfile
 import unittest
+import zipfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,7 +17,8 @@ from tests.fixtures.make_vpk import make_vpk
 from tests.test_rcon import FakeRcon
 from tests.test_mp3 import as_installed
 from tests.test_store import wav
-from tf2reaudio.server import LocalApp, LocalServer, InstanceLock, existing_instance, run_local
+from tf2reaudio import diagnostics
+from tf2reaudio.server import LocalApp, LocalServer, InstanceLock, ServerError, existing_instance, run_local
 from tf2reaudio.rcon import RconNotRunning
 from tf2reaudio.util import atomic_write
 
@@ -408,6 +410,146 @@ class ServerTest(unittest.TestCase):
         status, headers, _ = self.request("/api/take", "POST", json.dumps({"wav_base64": ""}).encode())
         self.assertEqual(status, 400)
         self.assertEqual(headers.get("Cache-Control"), "no-store")
+
+    def events(self):
+        return [json.loads(line) for line in (self.root / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+    def diag_event(self, payload, headers=None):
+        return self.request("/api/diagnostics/event", "POST", json.dumps(payload).encode(), headers=headers)[0]
+
+    def export_report(self, payload=None, server=None):
+        server = server or self.server
+        request = urllib.request.Request(server.url + "/api/diagnostics/export", method="POST",
+                                         data=json.dumps(payload or {}).encode(),
+                                         headers={"Content-Type": "application/json", "X-TF2RA": "1"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertRegex(response.headers["Content-Disposition"],
+                             r'^attachment; filename="TF2ReAudio-diagnostics-\d{8}T\d{6}Z-[0-9a-f]{6}\.zip"$')
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            with zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+                return {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
+
+    def test_diagnostics_export_without_tf2_and_with_manual_results(self):
+        root = Path(self.tmp.name) / "empty"
+        server = LocalServer(LocalApp(None, root), port=0).start()
+        self.addCleanup(server.stop)
+        files = self.export_report({"test_results": [{"step": "microphone", "outcome": "failed",
+                                                      "reason": "permission_denied"}]}, server)
+        self.assertEqual(set(files), {"summary.txt", "manifest.json", "events.jsonl", "test-results.json"})
+        self.assertIn("tf2: not_configured", files["summary.txt"])
+        self.assertIn("(tf2_not_found)", files["summary.txt"])
+        self.assertIn("microphone: failed (permission_denied)", files["summary.txt"])
+        self.assertIn("heard_in_tf2: not_tested", files["summary.txt"])
+        self.assertFalse((root / "reports").exists())  # HTTP export is never stored
+        for text in files.values():
+            self.assertNotIn(self.tmp.name, text)
+
+    def test_diagnostics_endpoints_reject_foreign_invalid_and_excess_events(self):
+        ok = {"action": "microphone", "outcome": "failed", "code": "permission_denied"}
+        self.assertEqual(self.request("/api/diagnostics/event", "POST", json.dumps(ok).encode(),
+                                      headers={"Host": "evil.test"})[0], 400)
+        self.assertEqual(self.diag_event(ok, {"Origin": "https://evil.test"}), 400)
+        self.assertEqual(self.raw_post_without_csrf(), 400)
+        self.assertEqual(self.request("/api/diagnostics/event", "POST", b"{" + b" " * 9000 + b"}")[0], 413)
+        for bad in ({**ok, "code": "hunter2"}, {**ok, "action": "/home/alice"}, {**ok, "message": "secret"},
+                    {**ok, "details": {"status": "secret"}}, {**ok, "details": []}):
+            self.assertEqual(self.diag_event(bad), 400, bad)
+        self.assertEqual(self.request("/api/diagnostics/export", "POST", b'{"path": "/tmp/x.zip"}')[0], 400)
+        for results in ([{"step": "save", "outcome": "maybe"}], [{"step": "save", "outcome": "ok"}] * 2,
+                        [{"step": "save", "outcome": "ok", "note": "free text"}], [{}] * 12):
+            self.assertEqual(self.request("/api/diagnostics/export", "POST",
+                                          json.dumps({"test_results": results}).encode())[0], 400, results)
+        self.assertEqual(self.diag_event({**ok, "details": {"label": "Alice's mic", "route": "take"}}), 204)
+        for _ in range(5):  # duplicates aggregate instead of filling the log or the rate limit
+            self.assertEqual(self.diag_event({**ok, "details": {"route": "take"}}), 204)
+        codes = [code for code in diagnostics.CODES if code not in ("permission_denied",)]
+        statuses = [self.diag_event({"action": "js_error", "outcome": "failed", "code": code}) for code in codes[:31]]
+        self.assertEqual(statuses[:29], [204] * 29)
+        self.assertEqual(statuses[29:], [429, 429])
+        browser = [e for e in self.events() if e["component"] == "browser"]
+        self.assertEqual(len(browser), 30)
+        self.assertEqual(browser[0]["details"], {"route": "take"})
+        log = (self.root / "logs" / "events.jsonl").read_text(encoding="utf-8")
+        for secret in ("Alice", "hunter2", "/home/alice", "secret"):
+            self.assertNotIn(secret, log)
+
+    def raw_post_without_csrf(self):
+        request = urllib.request.Request(self.server.url + "/api/diagnostics/event", method="POST", data=b"{}",
+                                         headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(request, timeout=5)
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            return exc.code
+
+    def test_diagnostic_routes_are_absent_from_sync_server(self):
+        from tf2reaudio.group import Group
+        from tf2reaudio.sync import SyncServer
+        group = Group.create("Friends", "A", root=Path(self.tmp.name) / "g", device_id="a" * 32)
+        host = SyncServer(self.app.game.store, group).start()
+        self.addCleanup(host.stop)
+        for path in ("/api/diagnostics/export", "/api/diagnostics/event"):
+            request = urllib.request.Request(host.url + path, method="POST", data=b"{}",
+                                             headers={"Content-Type": "application/json", "X-TF2RA": "1"})
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=5)
+            caught.exception.close()
+            self.assertNotEqual(caught.exception.headers.get("Content-Type"), "application/zip")
+
+    def test_operation_outcomes_are_logged_with_stable_codes(self):
+        self.app.game.settings["rcon_password"] = "0123456789abcdef"
+        with mock.patch.object(self.app.game.store, "add_take", side_effect=PermissionError(13, "denied", str(self.tf))):
+            status, _, raw = self.request("/api/take", "POST", wav(), "audio/wav", {"X-Line-ID": "soldier/medic"})
+        self.assertEqual(status, 500)
+        self.assertIn(b"denied", raw)  # the user still gets a useful message
+        self.save_take()
+        with mock.patch.object(self.app.game, "sync_files", side_effect=OSError(28, "full")):
+            status, result = self.json("/api/apply", "POST", {})
+        self.assertEqual((status, result["result"]), (200, "install_failed"))
+        status, result = self.json("/api/apply", "POST", {})
+        self.assertEqual((status, result["result"]), (200, "not_running"))
+        with mock.patch.object(self.app.game, "pending_apply", side_effect=RuntimeError("secret /home/alice")):
+            self.assertEqual(self.request("/api/sync-files", "POST", b"{}")[0], 500)
+        api = [(e["details"]["route"], e["outcome"], e["code"], e.get("error", {}).get("errno"))
+               for e in self.events() if e["action"] == "api"]
+        self.assertEqual(api, [("take", "failed", "write_denied", 13), ("take", "ok", "ok", None),
+                               ("apply", "failed", "install_failed", None), ("apply", "failed", "game_closed", None),
+                               ("sync_files", "failed", "unexpected_error", None)])
+        unexpected = self.events()[-1]["error"]
+        self.assertEqual(unexpected["type"], "RuntimeError")
+        self.assertTrue(all(frame[0].startswith("tf2reaudio") for frame in unexpected["frames"]))
+        log = (self.root / "logs" / "events.jsonl").read_text(encoding="utf-8")
+        for secret in ("0123456789abcdef", self.tmp.name, "secret", "RIFF"):
+            self.assertNotIn(secret, log)
+
+    def test_state_transitions_are_logged_once(self):
+        for _ in range(3):
+            self.json("/api/state")
+        self.app.game.settings["rcon_ok_once"] = True
+        self.json("/api/check-connection", "POST", {})
+        self.json("/api/state")
+        changes = [e["details"] for e in self.events() if e["action"] == "state_change"]
+        self.assertEqual(changes, [{"tf2_state": "not_configured", "group_state": "solo"},
+                                   {"tf2_state": "not_running"}])
+
+    def test_export_while_logging_concurrently(self):
+        with ThreadPoolExecutor(4) as pool:
+            writes = [pool.submit(self.diag_event, {"action": "js_error", "outcome": "failed", "code": code})
+                      for code in list(diagnostics.CODES)[:20]]
+            files = [pool.submit(self.export_report) for _ in range(4)]
+            for future in writes + files:
+                future.result()
+        for result in files:
+            for line in result.result()["events.jsonl"].splitlines():
+                diagnostics.clean_event(json.loads(line))
+
+    def test_port_exhaustion_is_logged_on_startup(self):
+        with mock.patch("tf2reaudio.server.LocalServer.start", side_effect=ServerError("Could not open the port")), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(ServerError):
+                run_local(self.tf, port=0, root=self.root, browser=False)
+        last = self.events()[-1]
+        self.assertEqual((last["action"], last["outcome"], last["code"]), ("startup", "failed", "port_unavailable"))
 
     def test_host_origin_content_type_and_limits(self):
         for host in ("evil.test", f"evil@127.0.0.1:{self.server.port}", f"localhost:{self.server.port}/x"):

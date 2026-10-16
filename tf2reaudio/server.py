@@ -25,6 +25,7 @@ import time
 import urllib.parse
 import webbrowser
 import zipfile
+from collections import deque
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,12 +33,14 @@ from pathlib import Path
 
 from . import PROTOCOL_VERSION, __version__, catalog, steam
 from .audio import InvalidWav, MAX_BYTES, inspect_wav
+from .diagnostics import (ROUTES, STATES, DiagnosticRecorder, DiagnosticsError, base_checks, build_bundle,
+                          bundle_name, clean_event, error_code)
 from .game import Game
 from .group import Group, GroupError
 from .sync import GroupStore, SyncServer, Syncer, SyncError, check_host, join_group
 from .tunnel import Tunnel, TunnelError
 from .store import ORIGINAL, Store, StoreError
-from .util import atomic_write, data_dir, set_low_priority
+from .util import InstanceLock, atomic_write, data_dir, set_low_priority
 from .vpk import VpkError, VpkIndex
 
 
@@ -49,7 +52,12 @@ MAX_REQUEST = 64 * 1024
 MAX_TAKE_JSON = ((MAX_BYTES + 2) // 3) * 4 + MAX_REQUEST
 MAX_ZIP = 64 * 1024 * 1024
 MAX_ZIP_EXPANDED = 128 * 1024 * 1024
+MAX_DIAG_EVENT = 8192
+DIAG_PER_MINUTE = 30
 CSRF_HEADER = "X-TF2RA"
+# A 200 response can still describe a failed operation.
+RESULT_CODES = {"not_running": "game_closed", "auth_failed": "rcon_auth_failed", "error": "rcon_error",
+                "install_failed": "install_failed", "not_configured": "rcon_not_configured"}
 # PLAN §13.3: CSP for the local UI. base requirement is:
 #   default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'
 # Added directive:
@@ -101,6 +109,11 @@ class LocalApp:
     def __init__(self, tf_dir: Path | None = None, root: Path | None = None):
         self.root = Path(root) if root else data_dir()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.diag = DiagnosticRecorder(self.root)
+        self._observed = {}
+        self._diag_lock = threading.Lock()
+        self._diag_times = deque()
+        self._diag_repeats = {}
         self._lock = threading.RLock()
         self.game: Game | None = None
         self.catalog = None
@@ -125,7 +138,74 @@ class LocalApp:
                 self.setup_error = str(exc)
         else:
             self._try_auto_detect()
+        code = "ok" if self.game else "tf2_setup_failed" if chosen is not None else "tf2_not_found"
+        self.diag.record("server", "tf2_detection", "ok" if self.game else "failed", code)
         self.start_syncer()
+
+    def browser_event(self, payload) -> int:
+        """Record one validated browser event; returns the HTTP status (204 or 429)."""
+        if set(payload) - {"action", "outcome", "code", "details"}:
+            raise ServerError("Unknown diagnostic event field.")
+        try:
+            event = clean_event({"v": 1, "ts": "2000-01-01T00:00:00Z", "session": "0" * 16, "seq": 1,
+                                 "component": "browser", "action": payload.get("action"), "op": None,
+                                 "outcome": payload.get("outcome"), "code": payload.get("code"),
+                                 "details": payload.get("details", {})}, drop_unknown_details=True)
+        except DiagnosticsError as exc:
+            raise ServerError(str(exc)) from None
+        key, now = (event["action"], event["outcome"], event["code"]), time.monotonic()
+        with self._diag_lock:
+            first, repeats = self._diag_repeats.get(key, (None, 0))
+            if first is not None and now - first < 60:
+                self._diag_repeats[key] = (first, repeats + 1)  # aggregated into the next recorded copy
+                return HTTPStatus.NO_CONTENT
+            while self._diag_times and now - self._diag_times[0] >= 60:
+                self._diag_times.popleft()
+            if len(self._diag_times) >= DIAG_PER_MINUTE:
+                return HTTPStatus.TOO_MANY_REQUESTS
+            self._diag_times.append(now)
+            self._diag_repeats[key] = (now, 0)
+        details = dict(event["details"], **({"count": min(repeats, 10**6)} if repeats else {}))
+        self.diag.record("browser", *key, details=details)
+        return HTTPStatus.NO_CONTENT
+
+    def diagnostic_checks(self, user_agent: str) -> dict:
+        """Path-free status for the support bundle; never repairs, applies or connects."""
+        checks = base_checks("app")
+        for family, pattern in (("edge", r"Edg/(\d+)"), ("firefox", r"Firefox/(\d+)"), ("chrome", r"Chrome/(\d+)"),
+                                ("safari", r"Version/(\d+)[^ ]* .*Safari/")):
+            match = re.search(pattern, user_agent)
+            if match:
+                checks.update(browser_family=family, browser_major=min(int(match.group(1)), 999))
+                break
+        else:
+            checks["browser_family"] = "other"
+        with self._lock:
+            group = self.group_json()["status"]
+            if group in STATES:
+                checks["group"] = group
+            checks["tf2"] = "ok" if self.game else "not_configured"
+            if self.game:
+                try:
+                    game = self.game
+                    checks.update(rcon=self.connection if self.connection in STATES else "unknown",
+                                  catalog_lines=sum(len(self.catalog.lines(c)) for c in catalog.CLASSES),
+                                  pending_apply=self.pending_apply(), mod_folder=game.mod.exists(),
+                                  test_mod=game.test_mod_present(), voices_disabled=game.disabled_dir.is_dir(),
+                                  collection_warning=bool(game.store.warning),
+                                  restart_required=bool(game.settings.get("restart_required", False)))
+                except (OSError, StoreError, ServerError):
+                    pass
+        return checks
+
+    def _observe(self, value: dict) -> dict:
+        """Record status transitions once, not every poll."""
+        current = {"tf2_state": value["tf2"], "group_state": value["group"]}
+        changed = {k: v for k, v in current.items() if self._observed.get(k) != v and v in STATES}
+        self._observed = current
+        if changed:
+            self.diag.record("server", "state_change", "ok", "state_changed", details=changed)
+        return value
 
     def group_json(self):
         if self.group is None:
@@ -385,7 +465,7 @@ class LocalApp:
     def state_json(self) -> dict:
         with self._lock:
             if self.game is None:
-                return {
+                return self._observe({
                     "app_version": __version__,
                     "protocol_version": PROTOCOL_VERSION,
                     "tf2": "not_configured",
@@ -394,9 +474,9 @@ class LocalApp:
                     "setup_error": self.setup_error,
                     "tf_path": None,
                     "pending_apply": 0,
-                }
+                })
             game = self.game
-            return {
+            return self._observe({
                 "app_version": __version__,
                 "protocol_version": PROTOCOL_VERSION,
                 "tf2": self.connection,
@@ -410,7 +490,7 @@ class LocalApp:
                 "collection_warning": game.store.warning,
                 "test_mod_present": game.test_mod_present(),
                 "conflicts": game.store.conflicts(),
-            }
+            })
 
     def settings_json(self) -> dict:
         game = self.game
@@ -468,6 +548,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _json(self, status: int, value: dict):
+        self._result = value
         self._send(status, _json_bytes(value))
 
     def _error(self, status: int, message: str):
@@ -504,27 +585,28 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             self._error(HTTPStatus.BAD_REQUEST, "Invalid Host header.")
             return
-        try:
+        parsed = urllib.parse.urlsplit(self.path)
+
+        def action():
             with self.app._lock:
-                self._get(urllib.parse.urlsplit(self.path))
-        except ServerError as exc:
-            self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        except (StoreError, InvalidWav, GroupError, SyncError, TunnelError) as exc:
-            self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        except (OSError, VpkError) as exc:
-            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
-        except KeyError:
-            self._error(HTTPStatus.NOT_FOUND, "Recording audio is unavailable.")
-        except Exception as exc:
-            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc) or "The local app could not complete that request.")
+                self._get(parsed)
+        self._dispatch(parsed, action, (HTTPStatus.NOT_FOUND, "Recording audio is unavailable."))
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if not self._host_ok():
             self._error(HTTPStatus.BAD_REQUEST, "Invalid Host header.")
             return
+        parsed = urllib.parse.urlsplit(self.path)
         try:
-            self._require_write()
-            parsed = urllib.parse.urlsplit(self.path)
+            self._require_write()  # foreign pages must not be able to fill the logs
+            if parsed.path.startswith("/api/diagnostics/"):
+                self._diagnostics(parsed.path)
+                return
+        except ServerError as exc:
+            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
+        def action():
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
             limit = MAX_REQUEST
             if parsed.path == "/api/take":
@@ -537,16 +619,63 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 with self.app._lock:
                     self._post(parsed, raw)
-        except KeyError:
-            self._error(HTTPStatus.BAD_REQUEST, "The requested recording or collection entry is unavailable.")
-        except ServerError as exc:
-            self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        except (StoreError, InvalidWav, GroupError, SyncError, TunnelError) as exc:
-            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        self._dispatch(parsed, action, (HTTPStatus.BAD_REQUEST,
+                                        "The requested recording or collection entry is unavailable."))
+
+    def _dispatch(self, parsed, action, key_error):
+        self._result, error = None, None
+        try:
+            action()
+        except KeyError as exc:
+            error, reply = exc, key_error
+        except (ServerError, StoreError, InvalidWav, GroupError, SyncError, TunnelError) as exc:
+            error, reply = exc, (HTTPStatus.BAD_REQUEST, str(exc))
         except (OSError, VpkError) as exc:
-            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+            error, reply = exc, (HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
         except Exception as exc:
-            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc) or "The local app could not complete that request.")
+            error, reply = exc, (HTTPStatus.INTERNAL_SERVER_ERROR,
+                                 str(exc) or "The local app could not complete that request.")
+        if error is None and self.command == "GET":
+            return  # reads and polls are not operations
+        path = parsed.path
+        route = ("take_audio" if path.startswith("/api/take/") else "original" if path.startswith("/api/original/")
+                 else path.removeprefix("/api/").replace("/", "_").replace("-", "_"))
+        details = {"route": route if route in ROUTES else "other"}
+        if error is not None:
+            self.app.diag.record("server", "api", "failed", error_code(error), details=details, error=error)
+            self._error(*reply)  # after recording, so the log already explains the reply
+            return
+        result = self._result if isinstance(self._result, dict) else {}
+        code = ("install_failed" if result.get("install_error") else RESULT_CODES.get(result.get("result"))
+                or ("sync_error" if result.get("error") else None))
+        self.app.diag.record("server", "api", "failed" if code else "ok", code or "ok", details=details)
+
+    def _diagnostics(self, path):
+        if self.headers.get("Content-Type", "").split(";", 1)[0].lower() != "application/json":
+            raise ServerError("Diagnostic requests must use JSON.")
+        if path == "/api/diagnostics/event":
+            length = self.headers.get("Content-Length", "")
+            if length.isdigit() and int(length) > MAX_DIAG_EVENT:
+                self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Diagnostic event is too large.")
+                return
+            self._send(self.app.browser_event(_read_json(self._read_body(MAX_DIAG_EVENT))))
+            return
+        if path != "/api/diagnostics/export":
+            raise ServerError("Unknown API endpoint.")
+        payload = _read_json(self._read_body())
+        if set(payload) - {"test_results"}:
+            raise ServerError("Only test_results can be sent with a diagnostic export.")
+        try:
+            data = build_bundle(self.app.diag.snapshot(), self.app.diagnostic_checks(self.headers.get("User-Agent", "")),
+                                payload.get("test_results", []))
+        except DiagnosticsError as exc:
+            raise ServerError(str(exc)) from None
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{bundle_name()}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _get(self, parsed):
         path = parsed.path
@@ -864,62 +993,27 @@ def existing_instance(root: Path) -> str | None:
     return None
 
 
-class InstanceLock:
-    """OS-managed lifetime lock; released even after a process crash.
-
-    The empty lock file is never replaced or unlinked: all processes must lock
-    the same inode. It contains no persistent application data.
-    """
-
-    def __init__(self, root):
-        path = Path(root, "instance.lock")
-        if not path.exists():
-            atomic_write(path, b"0")
-        self.file = path.open("r+b")
-        if self.file.seek(0, 2) == 0:
-            self.file.write(b"0")
-            self.file.flush()
-        self.file.seek(0)
-        self.acquired = False
-
-    def acquire(self):
-        try:
-            if sys.platform == "win32":
-                import msvcrt
-                self.file.seek(0)
-                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return False
-        self.acquired = True
-        return True
-
-    def close(self):
-        if self.acquired:
-            if sys.platform == "win32":
-                import msvcrt
-                self.file.seek(0)
-                msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)
-        self.file.close()
-        self.acquired = False
-
-
 def run_local(tf_dir=None, port=8440, root=None, browser=True):
     root = Path(root) if root else data_dir()
     root.mkdir(parents=True, exist_ok=True)
     lock = InstanceLock(root)
+    diag = DiagnosticRecorder(root)
     server = None
+    old_hook = threading.excepthook
+
+    def thread_failed(args):
+        if issubclass(args.exc_type, SystemExit):
+            return
+        diag.record("server", "thread", "failed", error_code(args.exc_value), error=args.exc_value)
+        print(f"Error: a background task stopped unexpectedly ({args.exc_type.__name__}). "
+              "Run `doctor --bundle` and send the report.", file=sys.stderr, flush=True)
     try:
         if not lock.acquire():
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 url = existing_instance(root)
                 if url:
+                    diag.record("server", "startup", "ok", "already_running")
                     print(f"TF2 Re-Audio is already running: {url}")
                     if browser:
                         webbrowser.open(url)
@@ -927,7 +1021,13 @@ def run_local(tf_dir=None, port=8440, root=None, browser=True):
                 time.sleep(0.1)
             raise ServerError("Another instance is starting or busy. Try opening the app again shortly.")
         set_low_priority()
-        server = LocalServer(LocalApp(tf_dir, root), port=port).start()
+        threading.excepthook = thread_failed
+        try:
+            server = LocalServer(LocalApp(tf_dir, root), port=port).start()
+        except ServerError as exc:
+            diag.record("server", "startup", "failed", "port_unavailable", error=exc)
+            raise
+        diag.record("server", "startup", "ok", "ok")
         print(f"TF2 Re-Audio is running at {server.url}", flush=True)
         print("Keep this window open. Press Ctrl+C to stop the app.", flush=True)
         if browser:
@@ -936,8 +1036,10 @@ def run_local(tf_dir=None, port=8440, root=None, browser=True):
     except KeyboardInterrupt:
         return 0
     finally:
+        threading.excepthook = old_hook
         if server:
             server.stop()
+            diag.record("server", "shutdown", "ok", "ok")
         lock.close()
     return 0
 

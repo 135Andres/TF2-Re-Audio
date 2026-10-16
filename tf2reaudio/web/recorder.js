@@ -80,6 +80,7 @@ window.Recorder = class {
       };
       this.media.onerror = event => { this.report(event.error); this.destroy(); };
       this.media.start();
+      Diagnostics.emit("record", "ok", "recording_started");
       this.started = performance.now();
       this.level();
       this.limitTimer = setTimeout(() => {
@@ -128,6 +129,7 @@ window.Recorder = class {
           this.audio = this.prepare(trim);
           resolve(this.audio);
         } catch (error) {
+          Diagnostics.emit("record", "failed", "decode_failed");
           this.onError(STRINGS.decodeFailed);
           resolve(null);
         }
@@ -175,6 +177,13 @@ window.Recorder = class {
   }
 
   report(error) {
+    const code = {
+      NotAllowedError: "permission_denied", SecurityError: "permission_denied", NotFoundError: "device_missing",
+      NotReadableError: "device_busy", OverconstrainedError: "device_constraint"
+    }[error?.name] || { [STRINGS.microphoneTimeout]: "mic_timeout", [STRINGS.microphoneUnsupported]: "feature_unavailable" }[error?.message];
+    if (error?.message !== STRINGS.microphoneCancelled) {
+      Diagnostics.emit("microphone", code === "feature_unavailable" ? "unsupported" : "failed", code || "mic_unknown");
+    }
     const message = {
       NotAllowedError: STRINGS.microphoneDenied, SecurityError: STRINGS.microphoneDenied,
       NotFoundError: STRINGS.microphoneMissing, NotReadableError: STRINGS.microphoneBusy,
