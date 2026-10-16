@@ -1,3 +1,48 @@
+# Public release packaging — 2026-10-16
+
+The user explicitly authorized publishing GitHub releases on 2026-10-16,
+superseding the historical private-distribution restriction below. Version
+0.1.0 is published as an early preview, with the existing Windows and
+real-network acceptance limits retained.
+
+## Changes and validation
+
+- The release ZIP now includes LICENSE, NOTICE, the sharing guide and the
+  Windows checklist. Packaged README links work independently of their location
+  in the source tree. The repository README points to the installable release ZIP.
+- Added a regression test that first failed on the missing LICENSE. It checks
+  the extracted notices/guides, local README links and CLI startup from a path
+  containing spaces, including the Linux launcher from a different directory.
+- `python -m unittest tests.test_build_zip -v`: 3 tests passed.
+- `python -m unittest`: 250 tests, OK, 18 skipped (16 optional browser checks
+  and two optional external-network checks). The existing duplicate-ZIP-entry
+  rejection fixture emits a UserWarning.
+- Against a freshly extracted ZIP, with temporary data, copied test fixtures,
+  and package import location verified: CLI, server and sync integration suites,
+  46 tests passed. No real TF2 or external network was used by these tests.
+- Separate Chromium run: 16 checks, 15 passed and
+  `test_group_host_generates_local_join_link` failed. Its mocked tunnel origin
+  `https://friends.example` is rejected by the existing host allowlist introduced
+  in the security hardening commit. A diagnostic rerun changing only that fake
+  origin in memory to `https://friends.trycloudflare.com` passed. The original
+  browser test file was not changed because it belongs to T15.
+- The publication procedure builds twice and checks byte equality, uploads the
+  ZIP and SHA-256 checksum to a draft release, downloads them for comparison,
+  then publishes the preview and verifies the public asset bytes.
+
+## Limits and owner handoff
+
+Native Windows startup/runtime download, physical microphones, real TF2/Casual,
+real tunnels and real-network sharing were not tested in this release session.
+The preview status does not complete those acceptance milestones.
+
+T15 needs to update the mocked origin and expected invitation URL in
+`tests/test_web.py::WebTest.test_group_host_generates_local_join_link` to a fake
+allowed Quick Tunnel origin. No production module changes are requested.
+Historical reports below describe their original candidates, not this release.
+
+---
+
 # Local UI review — private candidate, 2026-10-15
 
 This is an implementation and fixture-validation report, not a Windows or

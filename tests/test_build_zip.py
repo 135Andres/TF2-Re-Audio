@@ -1,4 +1,8 @@
 import io
+import os
+import re
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -41,3 +45,36 @@ class BuildZipTest(unittest.TestCase):
         with self.assertRaisesRegex(BuildError, "Missing package file"):
             build_zip(self.root)
         self.assertEqual(output.read_bytes(), before)
+
+
+class ReleaseArchiveTest(unittest.TestCase):
+    def test_extracted_release_has_notices_guides_and_working_cli(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            output, _ = build_zip(root, folder / "release.zip")
+            extracted = folder / "Extracted release with spaces"
+            with zipfile.ZipFile(output) as archive:
+                self.assertIsNone(archive.testzip())
+                archive.extractall(extracted)
+            for name in ("LICENSE", "NOTICE", "docs/group-sharing.md", "docs/windows-security-checklist.md"):
+                self.assertTrue((extracted / Path(name)).is_file(), f"Missing release file: {name}")
+                self.assertEqual((extracted / Path(name)).read_bytes(), (root / Path(name)).read_bytes())
+            readme = (extracted / "README.md").read_text(encoding="utf-8")
+            for target in re.findall(r"\]\(([^)]+)\)", readme):
+                if "://" not in target and not target.startswith("#"):
+                    self.assertTrue((extracted / target.split("#")[0]).is_file(), f"Broken packaged README link: {target}")
+            env = {**os.environ, "PYTHONPATH": "", "PYTHONNOUSERSITE": "1",
+                   "XDG_DATA_HOME": str(folder / "data"), "APPDATA": str(folder / "data"),
+                   "DISPLAY": "", "WAYLAND_DISPLAY": ""}
+            for arguments in (["--version"], ["run", "--help"], ["doctor", "--help"]):
+                result = subprocess.run([sys.executable, "-m", "tf2reaudio", *arguments],
+                                        cwd=extracted, env=env, capture_output=True,
+                                        text=True, encoding="utf-8", timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(result.stdout.strip())
+            if os.name != "nt":
+                result = subprocess.run(["sh", str(extracted / "tf2reaudio.sh"), "--version"],
+                                        cwd=folder, env=env, capture_output=True,
+                                        text=True, encoding="utf-8", timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

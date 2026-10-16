@@ -1,4 +1,4 @@
-"""Build a reproducible local-test candidate, without user data or runtimes."""
+"""Build a reproducible release ZIP, without user data or runtimes."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,10 @@ class BuildError(Exception):
 
 RESOURCE_SUFFIXES = {".py", ".js", ".html", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".ttf"}
 REQUIRED = {
+    "LICENSE": "LICENSE",
+    "NOTICE": "NOTICE",
+    "docs/group-sharing.md": "docs/group-sharing.md",
+    "docs/windows-security-checklist.md": "docs/windows-security-checklist.md",
     "TF2ReAudio.cmd": "TF2ReAudio.cmd",
     "tf2reaudio.sh": "tf2reaudio.sh",
     "docs/README.md": "README.md",
@@ -76,7 +80,7 @@ def main(argv=None) -> int:
     except (BuildError, OSError) as exc:
         print(f"Could not build the ZIP: {exc}", file=sys.stderr)
         return 1
-    print(f"Built local-test candidate: {output}")
+    print(f"Built release ZIP: {output}")
     print(f"SHA-256: {digest}")
     return 0
 

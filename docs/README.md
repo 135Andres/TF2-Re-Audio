@@ -5,7 +5,7 @@ No account needed. Solo recordings stay on your computer; joining a group shares
 
 ## Start
 
-1. Extract the whole ZIP into a folder.
+1. Download `TF2ReAudio-0.1.0.zip` from the [GitHub release](https://github.com/135Andres/TF2-Re-Audio/releases/tag/v0.1.0) and extract the whole ZIP into a folder.
 2. **Windows 10/11 (64-bit):** double-click `TF2ReAudio.cmd`.
    **Linux:** open a terminal in that folder and run `sh tf2reaudio.sh`.
 3. The app opens in your browser. Keep the launcher window open.
@@ -27,7 +27,7 @@ then restart TF2. Your recordings stay saved. Use **Enable voices** to bring the
 
 **You and your friend must each install TF2 Re-Audio on your own PC**, and use the same collaboration-enabled build. Each needs TF2 installed to hear the replacements locally. A shared invitation does not install the app or make everyone in the match hear your recordings.
 
-Group sharing is currently a development preview; older ZIPs may support only solo use. Keep internet hosting off until the pending P0 security work is completed. Read the [sharing guide](group-sharing.md) for setup, privacy and invitation details, and the [Windows checklist](windows-security-checklist.md) for the planned native tests.
+Group sharing is currently a development preview; older ZIPs may support only solo use. Keep internet hosting off until the pending P0 security work is completed. Read the [sharing guide](https://github.com/135Andres/TF2-Re-Audio/blob/main/docs/group-sharing.md) for setup, privacy and invitation details, and the [Windows checklist](https://github.com/135Andres/TF2-Re-Audio/blob/main/docs/windows-security-checklist.md) for the planned native tests.
 
 ## More help
 
