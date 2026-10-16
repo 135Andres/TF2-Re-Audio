@@ -416,7 +416,9 @@ def clean_test_results(test_results) -> list[dict]:
         if not isinstance(item, dict) or set(item) - {"step", "outcome", "reason"}:
             raise DiagnosticsError("Each test result needs step, outcome and an optional reason.")
         step, outcome, reason = item.get("step"), item.get("outcome"), item.get("reason")
-        if step not in STEPS or step in given or outcome not in TEST_OUTCOMES or (reason is not None and reason not in REASONS):
+        if (not isinstance(step, str) or step not in STEPS or step in given
+                or not isinstance(outcome, str) or outcome not in TEST_OUTCOMES
+                or (reason is not None and (not isinstance(reason, str) or reason not in REASONS))):
             raise DiagnosticsError("Invalid or repeated test result.")
         given[step] = {"step": step, "outcome": outcome, "source": "tester", **({"reason": reason} if reason else {})}
     return [given.get(step, {"step": step, "outcome": "not_tested", "source": "default"}) for step in STEPS]
@@ -503,8 +505,11 @@ def save_bundle(root: Path, data: bytes) -> Path:
         reports.mkdir(parents=True, exist_ok=True)
         path = reports / bundle_name()
         atomic_write(path, data)
-        owned = sorted(p for p in reports.iterdir() if REPORT_RE.fullmatch(p.name) and p.is_file() and not p.is_symlink())
-        for old in owned[:-KEEP_REPORTS]:
+        # The random filename suffix does not indicate creation order. Always
+        # preserve the report returned to the caller, including timestamp ties.
+        older = sorted((p for p in reports.iterdir() if p != path and REPORT_RE.fullmatch(p.name)
+                        and p.is_file() and not p.is_symlink()), key=lambda p: (p.stat().st_mtime_ns, p.name))
+        for old in older[:max(0, len(older) - (KEEP_REPORTS - 1))]:
             old.unlink(missing_ok=True)
     except OSError as exc:
         raise DiagnosticsError(f"Could not save the diagnostic report: {exc.strerror or exc.__class__.__name__}.") from None

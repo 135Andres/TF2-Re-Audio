@@ -182,6 +182,27 @@ class DiagnosticsTest(unittest.TestCase):
             with self.assertRaisesRegex(DiagnosticsError, "Permission denied"):
                 save_bundle(self.root, data)
 
+    def test_bundle_retention_preserves_newest_reports_with_same_timestamp(self):
+        names = [f"TF2ReAudio-diagnostics-20261016T120000Z-{suffix}.zip"
+                 for suffix in ("aaaaaa", "bbbbbb", "cccccc", "000000")]
+        data = build_bundle(self.rec.snapshot(), checks(), [])
+        saved = []
+        with mock.patch("tf2reaudio.diagnostics.bundle_name", side_effect=names):
+            for i in range(4):
+                saved.append(save_bundle(self.root, data))
+                self.assertTrue(saved[-1].is_file(), "The returned report must survive retention")
+                self.assertEqual(saved[-1].read_bytes(), data)
+                os.utime(saved[-1], (1700000000 + i, 1700000000 + i))
+        self.assertEqual(set((self.root / "reports").iterdir()), set(saved[1:]))
+
+    def test_bundle_rejects_non_string_checklist_values(self):
+        for field in ("step", "outcome", "reason"):
+            for value in ([], {}, 42, True):
+                with self.subTest(field=field, value=value):
+                    result = {"step": "save", "outcome": "failed", "reason": "write_denied", field: value}
+                    with self.assertRaises(DiagnosticsError):
+                        build_bundle(self.rec.snapshot(), checks(), [result])
+
     def test_bundle_stays_under_cap(self):
         many = [dict(clean_event({"v": 1, "ts": "2026-01-01T00:00:00Z", "session": "0" * 16, "seq": i + 1,
                                   "component": "server", "action": "api", "outcome": "failed",
