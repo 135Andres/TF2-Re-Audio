@@ -1,4 +1,10 @@
+import contextlib
 import copy
+import io
+import socket
+import threading
+import time
+from unittest.mock import patch
 import hashlib
 import json
 import tempfile
@@ -8,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from tf2reaudio import PROTOCOL_VERSION
+from tf2reaudio import sync
 from tf2reaudio.catalog import build
 from tf2reaudio.group import Group
 from tf2reaudio.store import Store
@@ -151,6 +158,118 @@ class SyncTests(unittest.TestCase):
         for i in range(6):
             status, _, _ = self.request("/api/redeem", "POST", {"code": "bad", "display_name": "Eve", "device_id": f"e{i}"})
         self.assertEqual(status, 429)
+
+
+    # S1: slow or abusive peers cannot hold the app lock or unbounded workers.
+    def connect(self):
+        conn = socket.create_connection(("127.0.0.1", self.host.port), timeout=5)
+        self.addCleanup(conn.close)
+        return conn
+
+    def drip(self, conn, seconds=3):
+        """Send one byte per 0.1 s, well within the inactivity timeout; return the first reply."""
+        conn.settimeout(0.1)
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                conn.sendall(b"x")
+                return conn.recv(100)
+            except socket.timeout:
+                pass
+            except OSError:
+                return b""
+        return None
+
+    def test_partial_redeem_body_does_not_hold_lock(self):
+        conn = self.connect()
+        conn.sendall(("POST /api/redeem HTTP/1.1\r\nHost: x\r\nX-TF2RA-Protocol: %d\r\n"
+                      "Content-Length: 100\r\n\r\n{" % PROTOCOL_VERSION).encode())
+        time.sleep(0.3)
+        started = time.monotonic()
+        self.assertTrue(self.host._lock.acquire(timeout=2))
+        self.host._lock.release()
+        self.assertEqual(self.request("/api/snapshot")[0], 200)
+        self.assertLess(time.monotonic() - started, 2)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            conn.close()
+            time.sleep(0.3)
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_connection_cap_rejects_overflow(self):
+        idle = [self.connect() for _ in range(sync.MAX_CONNECTIONS)]
+        time.sleep(0.3)
+        self.assertIn(b"503", self.connect().recv(100))
+        for conn in idle:
+            conn.close()
+        time.sleep(0.3)
+        self.assertEqual(self.request("/api/snapshot")[0], 200)
+
+    def test_dripping_header_hits_absolute_deadline(self):
+        self.addCleanup(setattr, sync, "HEADER_DEADLINE", sync.HEADER_DEADLINE)
+        sync.HEADER_DEADLINE = 0.5
+        started = time.monotonic()
+        self.assertIsNotNone(self.drip(self.connect()))
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_dripping_headers_after_request_line_hit_deadline(self):
+        self.addCleanup(setattr, sync, "HEADER_DEADLINE", sync.HEADER_DEADLINE)
+        sync.HEADER_DEADLINE = 0.5
+        conn = self.connect()
+        conn.sendall(b"GET /api/hello HTTP/1.1\r\nX-Pad: ")
+        started = time.monotonic()
+        self.assertIsNotNone(self.drip(conn))
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_responses_are_written_outside_lock(self):
+        # A slow reader blocks inside _send; another thread must still get the app lock.
+        take = self.record(self.sa, self.a)
+        original, free = sync._Handler._send, []
+        def probe(handler, *args, **kwargs):
+            def try_lock():
+                if self.host._lock.acquire(timeout=1):
+                    self.host._lock.release()
+                    free.append(True)
+                else:
+                    free.append(False)
+            t = threading.Thread(target=try_lock)
+            t.start()
+            t.join()
+            return original(handler, *args, **kwargs)
+        with patch.object(sync._Handler, "_send", probe):
+            self.assertEqual(self.request("/api/blob/" + self.sa.take(take)["sha256"])[0], 200)
+            self.assertEqual(self.request("/api/snapshot")[0], 200)
+        self.assertEqual(free, [True, True])
+
+    def test_malformed_framing_and_unauthenticated_writes_rejected(self):
+        base = "POST /api/snapshot HTTP/1.1\r\nHost: x\r\nX-TF2RA-Protocol: %d\r\nAuthorization: Bearer %s\r\n" % (PROTOCOL_VERSION, self.b.token)
+        for extra in ("Transfer-Encoding: chunked\r\n", "Content-Length: 2\r\nContent-Length: 2\r\n",
+                      "Content-Length: -1\r\n", "Content-Length: 1e3\r\n", "Content-Length: %d\r\n" % (sync.MAX_SNAPSHOT + 1), ""):
+            with self.subTest(extra=extra):
+                conn = self.connect()
+                conn.sendall((base + extra + "\r\n").encode())
+                self.assertIn(b" 400 ", conn.recv(200))
+        for path, method in (("/api/snapshot", "POST"), ("/api/blob/" + "0" * 64, "PUT"), ("/api/blob/" + "0" * 64, "GET")):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path, method, b"{}", token="wrong")[0], 401)
+
+    def test_blocked_destination_sends_nothing(self):
+        with patch("urllib.request.build_opener") as opener:
+            for url in ("https://169.254.169.254", "https://127.0.0.1:8443", "https://[::1]"):
+                with self.assertRaises(SyncError):
+                    check_host(url)
+                result = sync_once(self.sb, self.b, url, self.b.token)
+                self.assertIsNotNone(result.error)
+        opener.assert_not_called()
+
+    def test_dripping_body_hits_absolute_deadline(self):
+        self.addCleanup(setattr, sync, "BODY_DEADLINE", sync.BODY_DEADLINE)
+        sync.BODY_DEADLINE = 0.5
+        conn = self.connect()
+        conn.sendall(("PUT /api/blob/%s HTTP/1.1\r\nHost: x\r\nX-TF2RA-Protocol: %d\r\n"
+                      "Authorization: Bearer %s\r\nContent-Length: 1000\r\n\r\n"
+                      % ("0" * 64, PROTOCOL_VERSION, self.b.token)).encode())
+        self.assertIn(b" 400 ", self.drip(conn))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ FORMAT_VERSION = 1
 MAX_EVENTS = 50000
 _ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _SHA = re.compile(r"[0-9a-f]{64}")
+_TUNNEL_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com")
 
 
 class GroupError(Exception):
@@ -44,18 +45,27 @@ def _hash(token):
 
 
 def validate_url(url):
-    """Only HTTPS public hosts or explicit loopback HTTP; never credentials/query."""
+    """Return the normalized host link: a quick-tunnel HTTPS origin or loopback HTTP.
+
+    Other HTTPS hosts are refused so a hostile link cannot point the app at
+    internal addresses (127.0.0.1:8443, 169.254.169.254, LAN devices).
+    """
     _need(isinstance(url, str) and len(url) <= 2048, "Enter a valid host link.")
     try:
-        parsed = urlsplit(url)
+        parsed = urlsplit(url.strip())
         port = parsed.port
     except ValueError:
         raise GroupError("Enter a valid host link.") from None
-    _need(parsed.hostname and not parsed.username and not parsed.password and not parsed.query
-          and not parsed.fragment and parsed.path in ("", "/")
-          and (parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"))
-          and (port is None or 1 <= port <= 65535), "Use an HTTPS host link (or loopback HTTP for testing).")
-    return url.rstrip("/")
+    host = parsed.hostname or ""
+    tunnel = (parsed.scheme == "https" and _TUNNEL_HOST.fullmatch(host) is not None
+              and host != "api.trycloudflare.com" and port in (None, 443))
+    # shortcut: loopback HTTP stays allowed for fixtures and same-PC testing; it can only reach
+    # /api/hello on this PC before group_id must match. Gate it behind a developer flag if that changes.
+    loopback = parsed.scheme == "http" and host == "127.0.0.1" and port is not None
+    _need((tunnel or loopback) and not parsed.username and not parsed.password and not parsed.query
+          and not parsed.fragment and parsed.path in ("", "/"),
+          "Use the host's https://….trycloudflare.com link.")
+    return f"https://{host}" if tunnel else f"http://127.0.0.1:{port}"
 
 
 class Group:

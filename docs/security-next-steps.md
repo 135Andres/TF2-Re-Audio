@@ -1,6 +1,6 @@
 # Security review and next-step plan
 
-Date: 2026-10-15. Status: planning only; no hardening changes implemented.
+Date: 2026-10-15. Status: S1 implemented and SEC-04 destination allowlist implemented 2026-10-16 (see S1/S4 checkboxes); S2, S3, S5, S6 and the rest of S4 unstarted.
 Requested next human session: native Windows on 2026-10-16.
 
 **Goal:** protect users' computers, credentials, recordings and ability to use the local app when sharing with friends or playing TF2. Keep the existing invitation workflow.
@@ -67,12 +67,14 @@ Keep audio buffering to one validated blob at a time. Apply a 16 MiB download bu
 **Owners/files:** T12 sync.py/tests/test_sync.py; T14 server.py/tests/test_server.py; T13 tests/test_integration_sync.py.
 **Interfaces to agree:** SyncServer's admission/deadline policy; keep its existing mutation lock only for short validated state changes. Syncer cancellation must interrupt pending network work without a post-stop commit.
 
-- [ ] Reproduce SEC-01 as a fixture regression: hold one incomplete redeem body; /api/state must complete within 2 seconds on an otherwise idle fixture host.
-- [ ] Bound admitted handlers before spawning worker threads; reject overflow with a small 503 response or close safely without taking the app lock.
-- [ ] Enforce absolute header/body/total deadlines; test a peer that supplies data often enough to avoid an inactivity timeout.
-- [ ] Read/parse outside the app lock; recheck membership/invite validity at commit to avoid authorization races.
-- [ ] Verify invalid token, malformed length, duplicate headers, chunked input and disconnected error writes do not hang or print tracebacks; no secrets in errors.
+- [x] Reproduce SEC-01 as a fixture regression: hold one incomplete redeem body; /api/state must complete within 2 seconds on an otherwise idle fixture host.
+- [x] Bound admitted handlers before spawning worker threads; reject overflow with a small 503 response or close safely without taking the app lock.
+- [x] Enforce absolute header/body/total deadlines; test a peer that supplies data often enough to avoid an inactivity timeout.
+- [x] Read/parse outside the app lock; recheck membership/invite validity at commit to avoid authorization races.
+- [x] Verify invalid token, malformed length, duplicate headers, chunked input and disconnected error writes do not hang or print tracebacks; no secrets in errors.
 - [ ] Verify loopback-only binding, local Origin/Host checks and sync endpoint allowlist, including RCON/settings/static/download paths; reject any future wildcard bind by default.
+
+Done in sync.py (tests/test_sync.py): 8-slot admission with 503 overflow, 5/20/25 s absolute deadlines via a per-connection watchdog (the header deadline covers header lines, not only the request line), lock waits bounded by the request deadline (503 busy), body read and WAV/hash checks outside the app lock with token recheck at commit, responses written after the lock is released, quiet peer disconnects (SEC-08), chunked/duplicate/malformed Content-Length and unauthenticated write regressions. Not yet: Windows run. The endpoint allowlist item is covered by existing tests for /, settings and downloads; there is no wildcard bind option to reject.
 
 **Acceptance:** capped handlers/memory, responsive local UI under eight slow fixture peers, automatic cleanup after deadline, existing functional tests green.
 
@@ -104,11 +106,13 @@ Keep audio buffering to one validated blob at a time. Apply a 16 MiB download bu
 
 **Owners/files:** T11 group.py/tests/test_group.py; T12 sync.py/tests/test_sync.py; T14 server.py/tests/test_server.py; T18 group.js; T15 strings.js/tests/test_web.py.
 
-- [ ] For the initial supported tunnel mode, allow only a normalized HTTPS quick-tunnel hostname on port 443; exclude the provider API hostname, credentials, query/fragment, IP literals, deceptive suffixes and alternate ports. Keep loopback HTTP as an explicit fixture/developer policy, not a normal join default.
+- [x] For the initial supported tunnel mode, allow only a normalized HTTPS quick-tunnel hostname on port 443; exclude the provider API hostname, credentials, query/fragment, IP literals, deceptive suffixes and alternate ports. Keep loopback HTTP as an explicit fixture/developer policy, not a normal join default.
 - [ ] Reject non-public DNS results before connection and verify the address actually used, preserving TLS hostname verification. A one-time DNS lookup followed by independent urllib resolution is insufficient against rebinding. Test with a fake resolver/transport; never probe real internal services.
 - [ ] Keep redirect rejection for both unauthenticated and credential-bearing requests. Define proxy behavior explicitly instead of accidentally inheriting a proxy that bypasses destination checks.
 - [ ] Show the full normalized new host origin before updating; never regard hello/group_id as proof. Define how trusted host changes are approved and how credential rotation/revocation works without breaking offline recovery.
 - [ ] Document the remaining trusted-host model. A hostname restriction alone cannot authenticate a friend; a malicious quick-tunnel endpoint remains possible.
+
+Done in group.validate_url (tests/test_group.py, tests/test_sync.py): only https://<label>.trycloudflare.com on port 443 (not api.), normalized to the origin, or http://127.0.0.1:<port>. Blocked links make zero requests. Loopback HTTP is still always allowed (marked shortcut in code). DNS checks are not added: the allowlisted names resolve through Cloudflare's DNS, not attacker DNS. System HTTPS proxies are still honored; decide whether to keep that.
 
 **Acceptance:** blocked destinations cause zero network requests/credential transmission; wrong-group links preserve local state; approved host change tests pass with the residual trust model explicitly stated.
 

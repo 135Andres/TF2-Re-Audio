@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tf2reaudio.group import Group, GroupError
+from tf2reaudio.group import Group, GroupError, validate_url
 from tf2reaudio.util import atomic_write
 
 
@@ -19,6 +19,19 @@ class GroupTests(unittest.TestCase):
     def join(self, name="Bob", device="device-b"):
         member, token = self.a.redeem_invite(self.a.create_invite(), name, device)
         return Group.join(self.a.snapshot(), member, token, device, self.root / device)
+
+    def test_host_links_limited_to_quick_tunnel_or_loopback(self):
+        self.assertEqual(validate_url(" HTTPS://Formula-Tabs.trycloudflare.com/ "), "https://formula-tabs.trycloudflare.com")
+        self.assertEqual(validate_url("https://a.trycloudflare.com:443"), "https://a.trycloudflare.com")
+        self.assertEqual(validate_url("http://127.0.0.1:8441/"), "http://127.0.0.1:8441")
+        for bad in ("https://127.0.0.1:8443", "https://[::1]", "https://169.254.169.254", "https://192.168.1.5",
+                    "https://api.trycloudflare.com", "https://a.trycloudflare.com:8443", "https://a.trycloudflare.com.evil.test",
+                    "https://evil-trycloudflare.com", "https://user:pw@a.trycloudflare.com", "https://a.trycloudflare.com/?x=1",
+                    "https://a.trycloudflare.com/#x", "https://a.trycloudflare.com/api", "http://a.trycloudflare.com",
+                    "http://127.0.0.1", "http://localhost:8441", "http://[::1]:8441", "ftp://a.trycloudflare.com",
+                    "https://a.trycloudflare.com\\@evil.test", "https://a_b.trycloudflare.com", None, ""):
+            with self.subTest(bad=bad), self.assertRaises(GroupError):
+                validate_url(bad)
 
     def test_identity_and_secret_survive_restart_but_not_replication(self):
         loaded = Group.load(self.root / "a")

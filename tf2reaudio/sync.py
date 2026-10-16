@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +26,8 @@ from .util import atomic_write
 
 MAX_SNAPSHOT = 16 * 1024 * 1024
 MAX_RECORDS = 50000
+MAX_CONNECTIONS = 8
+HEADER_DEADLINE, BODY_DEADLINE, REQUEST_DEADLINE = 5, 20, 25
 _SHA = re.compile(r"[0-9a-f]{64}")
 
 
@@ -228,6 +230,40 @@ def _validate(store, group, envelope, actor=None):
 class _HTTPServer(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
     daemon_threads = True
+    request_queue_size = MAX_CONNECTIONS
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        # Admit before spawning a worker so slow peers cannot create unbounded threads.
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+    def handle_error(self, request, client_address):
+        if not isinstance(sys.exc_info()[1], OSError):
+            super().handle_error(request, client_address)  # Peer disconnects stay quiet.
+
+
+class _Busy(Exception):
+    pass
 
 
 class SyncServer:
@@ -267,6 +303,36 @@ class _Handler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(5)
+        self._started = time.monotonic()
+        self._arm(HEADER_DEADLINE)
+
+    def _arm(self, seconds):
+        # A socket timeout only bounds inactivity; this bounds a peer that drips bytes.
+        self._watchdog = threading.Timer(max(seconds, 0), self._expire)
+        self._watchdog.daemon = True
+        self._watchdog.start()
+
+    def _expire(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def _remaining(self):
+        return REQUEST_DEADLINE - (time.monotonic() - self._started)
+
+    def parse_request(self):
+        ok = super().parse_request()  # Reads the headers, so it stays under the header deadline.
+        self._watchdog.cancel()
+        self._arm(self._remaining())
+        return ok
+
+    def finish(self):
+        self._watchdog.cancel()
+        try:
+            super().finish()
+        except OSError:
+            pass
 
     def log_message(self, *args):
         pass  # Do not log bearer tokens, invitation codes or paths.
@@ -291,12 +357,39 @@ class _Handler(BaseHTTPRequestHandler):
         size = int(lengths[0])
         if not 0 <= size <= maximum:
             raise SyncError("The request exceeds the sync size limit.")
-        body = self.rfile.read(size)
-        if len(body) != size:
-            raise SyncError("The transfer was interrupted. Retry the recording.")
-        return body
+        deadline = time.monotonic() + min(BODY_DEADLINE, self._remaining())
+        chunks, received = [], 0
+        while received < size:
+            chunk = self.rfile.read1(min(65536, size - received))
+            if not chunk or time.monotonic() > deadline:
+                raise SyncError("The transfer was interrupted. Retry the recording.")
+            chunks.append(chunk)
+            received += len(chunk)
+        return b"".join(chunks)
+
+    @contextmanager
+    def _locked(self):
+        """Wait for the shared app lock only within the request deadline."""
+        lock = self.server.owner._lock
+        if not lock.acquire(timeout=max(self._remaining(), 0.01)):
+            raise _Busy()
+        try:
+            yield
+        finally:
+            lock.release()
 
     def _run(self):
+        try:
+            self._dispatch()
+        except _Busy:
+            try:
+                self._send(503, {"error": "The host is busy. Try again soon."})
+            except OSError:
+                pass
+        except OSError:
+            pass  # Includes peer disconnects while writing an error response.
+
+    def _dispatch(self):
         owner = self.server.owner
         try:
             if self.headers.get("X-TF2RA-Protocol") != str(PROTOCOL_VERSION):
@@ -306,11 +399,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, {"group_id": owner.group.group_id, "protocol_version": PROTOCOL_VERSION,
                                  "app_version": __version__})
                 return
-            with owner._lock:
-                if self.command == "POST" and self.path in ("/api/redeem", "/api/redeem-invite"):
-                    now = time.monotonic()
-                    # Trust the socket address only. Behind a tunnel this deliberately shares a bucket.
-                    address = self.client_address[0]
+            if self.command == "POST" and self.path in ("/api/redeem", "/api/redeem-invite"):
+                now = time.monotonic()
+                # Trust the socket address only. Behind a tunnel this deliberately shares a bucket.
+                address = self.client_address[0]
+                with self._locked():
                     if len(owner._attempts) > 1024:
                         owner._attempts = {ip: q for ip, q in owner._attempts.items() if q and q[-1] > now - 60}
                     attempts = owner._attempts.setdefault(address, deque())
@@ -320,80 +413,91 @@ class _Handler(BaseHTTPRequestHandler):
                         self._send(429, {"error": "Too many invitation attempts. Try again in one minute."})
                         return
                     attempts.append(now)
-                    body = _object(self._body(4096))
+                # Read untrusted bodies without holding the lock shared with the local UI.
+                body = _object(self._body(4096))
+                with self._locked():
                     mid, token = owner.group.redeem_invite(body.get("code"), body.get("display_name"), body.get("device_id"))
-                    self._send(200, {"member_id": mid, "token": token, "group": owner.group.snapshot()})
-                    return
-                auth = self.headers.get_all("Authorization", [])
-                actor = owner.group.verify_token(auth[0][7:]) if len(auth) == 1 and auth[0].startswith("Bearer ") else None
-                if actor is None:
-                    self._send(401, {"error": "Group access is no longer valid."})
-                    return
-                if self.path == "/api/snapshot":
-                    if self.command == "GET":
-                        snapshot = _envelope(owner.store, owner.group)
-                        etag = '"' + hashlib.sha256(_json(snapshot)).hexdigest() + '"'
-                        if self.headers.get("If-None-Match") == etag:
-                            self._send(304, raw=b"", etag=etag)
-                        else:
-                            self._send(200, snapshot, etag=etag)
-                        return
-                    if self.command == "POST":
-                        envelope = _object(self._body(MAX_SNAPSHOT))
-                        incoming = _validate(owner.store, owner.group, envelope, actor)
-                        staged = {}
-                        inbox = owner.store.root.parent / "sync-inbox" / actor
-                        for take in incoming["takes"]:
-                            sha = take["sha256"]
-                            if owner.store.has_blob(sha):
-                                audio = owner.store.blob(sha)
-                            else:
-                                try:
-                                    audio = (inbox / (sha + ".wav")).read_bytes()
-                                except OSError:
-                                    raise SyncError("Upload all recording audio before sharing its metadata.") from None
-                            if hashlib.sha256(audio).hexdigest() != sha:
-                                raise SyncError("The recording hash does not match its audio.")
-                            inspect_wav(audio)
-                            staged[sha] = audio
-                        _install_audio(owner.store, staged)
-                        owner.group.merge(envelope["group"], actor=actor)
-                        owner.store.merge(incoming)
-                        for sha in staged:
-                            (inbox / (sha + ".wav")).unlink(missing_ok=True)
-                        ids = [t["take_id"] for t in incoming["takes"]] + [e["event_id"] for e in incoming["events"]]
-                        self._send(200, {"acknowledged": ids})
-                        return
-                if self.path.startswith("/api/blob/") and _SHA.fullmatch(self.path[10:]):
-                    sha = self.path[10:]
-                    if self.command == "GET":
-                        if not any(t["sha256"] == sha for t in owner.store.snapshot()["takes"]):
-                            self._send(404, {"error": "Recording audio is unavailable."})
-                            return
-                        self._send(200, raw=owner.store.blob(sha))
-                        return
-                    if self.command == "PUT":
-                        raw = self._body(MAX_BYTES)
-                        if hashlib.sha256(raw).hexdigest() != sha:
-                            raise SyncError("The recording hash does not match its audio.")
-                        inspect_wav(raw)
-                        if not owner.store.has_blob(sha):
-                            inbox = owner.store.root.parent / "sync-inbox" / actor
-                            inbox.mkdir(parents=True, exist_ok=True)
-                            files = list(inbox.glob("*.wav"))
-                            if (len(files) >= 10000 or sum(p.stat().st_size for p in files) + len(raw) > 128 * 1024 * 1024) and not (inbox / (sha + ".wav")).exists():
-                                raise SyncError("Too many incomplete uploads. Complete a sync before uploading more audio.")
-                            atomic_write(inbox / (sha + ".wav"), raw)
-                        self._send(200, {"sha256": sha})
-                        return
-                self._send(404, {"error": "This group endpoint does not exist."})
+                    snapshot = owner.group.snapshot()
+                self._send(200, {"member_id": mid, "token": token, "group": snapshot})
+                return
+            auth = self.headers.get_all("Authorization", [])
+            token = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else None
+            actor = owner.group.verify_token(token) if token else None
+            if actor is None:
+                self._send(401, {"error": "Group access is no longer valid."})
+                return
+            body = None
+            if self.command == "POST" and self.path == "/api/snapshot":
+                body = self._body(MAX_SNAPSHOT)
+            elif self.command == "PUT" and self.path.startswith("/api/blob/") and _SHA.fullmatch(self.path[10:]):
+                body = self._body(MAX_BYTES)
+                if hashlib.sha256(body).hexdigest() != self.path[10:]:
+                    raise SyncError("The recording hash does not match its audio.")
+                inspect_wav(body)
+            with self._locked():
+                # Membership may have changed while the body was read.
+                if owner.group.verify_token(token) != actor:
+                    reply = (401, {"error": "Group access is no longer valid."})
+                else:
+                    reply = self._authorized(owner, actor, body)
+            # Write outside the lock so a slow reader cannot stall the local UI.
+            self._send(*reply)
         except (SyncError, GroupError, StoreError, InvalidWav, ValueError, TypeError, RecursionError) as exc:
             status = 426 if isinstance(exc, SyncError) and exc.status == "update_required" else 400
             self._send(status, {"error": str(exc) if isinstance(exc, (SyncError, GroupError, StoreError, InvalidWav)) else "Invalid sync data."})
         except KeyError:
             self._send(400, {"error": "Upload all recording audio before sharing its metadata."})
-        except (OSError, socket.timeout):
-            return
+
+    def _authorized(self, owner, actor, body):
+        """Run under the app lock; return the _send arguments."""
+        if self.path == "/api/snapshot":
+            if self.command == "GET":
+                snapshot = _envelope(owner.store, owner.group)
+                etag = '"' + hashlib.sha256(_json(snapshot)).hexdigest() + '"'
+                if self.headers.get("If-None-Match") == etag:
+                    return (304, None, b"", etag)
+                return (200, snapshot, None, etag)
+            if self.command == "POST":
+                envelope = _object(body)
+                incoming = _validate(owner.store, owner.group, envelope, actor)
+                staged = {}
+                inbox = owner.store.root.parent / "sync-inbox" / actor
+                for take in incoming["takes"]:
+                    sha = take["sha256"]
+                    if owner.store.has_blob(sha):
+                        audio = owner.store.blob(sha)
+                    else:
+                        try:
+                            audio = (inbox / (sha + ".wav")).read_bytes()
+                        except OSError:
+                            raise SyncError("Upload all recording audio before sharing its metadata.") from None
+                    if hashlib.sha256(audio).hexdigest() != sha:
+                        raise SyncError("The recording hash does not match its audio.")
+                    inspect_wav(audio)
+                    staged[sha] = audio
+                _install_audio(owner.store, staged)
+                owner.group.merge(envelope["group"], actor=actor)
+                owner.store.merge(incoming)
+                for sha in staged:
+                    (inbox / (sha + ".wav")).unlink(missing_ok=True)
+                ids = [t["take_id"] for t in incoming["takes"]] + [e["event_id"] for e in incoming["events"]]
+                return (200, {"acknowledged": ids})
+        if self.path.startswith("/api/blob/") and _SHA.fullmatch(self.path[10:]):
+            sha = self.path[10:]
+            if self.command == "GET":
+                if not any(t["sha256"] == sha for t in owner.store.snapshot()["takes"]):
+                    return (404, {"error": "Recording audio is unavailable."})
+                return (200, None, owner.store.blob(sha))
+            if self.command == "PUT":
+                if not owner.store.has_blob(sha):
+                    inbox = owner.store.root.parent / "sync-inbox" / actor
+                    inbox.mkdir(parents=True, exist_ok=True)
+                    files = list(inbox.glob("*.wav"))
+                    if (len(files) >= 10000 or sum(p.stat().st_size for p in files) + len(body) > 128 * 1024 * 1024) and not (inbox / (sha + ".wav")).exists():
+                        raise SyncError("Too many incomplete uploads. Complete a sync before uploading more audio.")
+                    atomic_write(inbox / (sha + ".wav"), body)
+                return (200, {"sha256": sha})
+        return (404, {"error": "This group endpoint does not exist."})
 
     do_GET = do_POST = do_PUT = _run
 
