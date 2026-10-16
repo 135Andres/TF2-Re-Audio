@@ -90,6 +90,12 @@
       <textarea id="launch-options" readonly data-aria-label="copyOptions" hidden></textarea>
       <h2 data-text="backup"></h2><p class="help" data-text="backupHelp"></p><button id="export-collection" class="button secondary" type="button" data-text="export"></button>
       <label for="import-file" data-text="chooseZip"></label><div class="inline-form"><input id="import-file" type="file" accept=".zip,application/zip"><button id="import-collection" class="button secondary" type="button" data-text="import"></button></div>
+      <h2 data-text="diagnostics"></h2><p class="help" data-text="diagnosticsHelp"></p>
+      <label for="diag-step" data-text="diagStep"></label><select id="diag-step"></select>
+      <label for="diag-outcome" data-text="diagOutcome"></label><select id="diag-outcome"></select>
+      <label for="diag-reason" data-text="diagReason"></label><select id="diag-reason"></select>
+      <div class="inline-form"><button id="diagnostics-export" class="button secondary" type="button" data-text="diagnosticsExport"></button><button id="diagnostics-browser" class="button ghost" type="button" data-text="diagnosticsBrowserOnly"></button></div>
+      <p id="diagnostics-message" class="help" role="status" aria-live="polite"></p>
       <div class="settings-danger"><h2 data-text="removeVoices"></h2><p data-text="disableHelp"></p><div class="line-actions"><button id="disable-voices" class="button secondary" type="button" data-text="disable"></button><button id="enable-voices" class="button secondary" type="button" data-text="enable" hidden></button></div>
         <p data-text="deleteHelp"></p><button id="delete-collection" class="button danger" type="button" data-text="deleteCollection"></button>
         <p data-text="uninstallHelp"></p><label class="check-label"><input id="uninstall-delete" type="checkbox"><span data-text="deleteWithUninstall"></span></label><button id="uninstall" class="button danger" type="button" data-text="uninstall"></button>
@@ -144,6 +150,6 @@
     <p id="group-message" role="status" aria-live="polite"></p>
   </dialog>
   <footer class="footer"><span data-text="footer"></span> <span id="app-version"></span></footer>
-  <script src="/strings.js"></script><script src="/wav.js"></script><script src="/recorder.js"></script><script src="/setup.js"></script><script src="/group.js"></script><script src="/app.js"></script>
+  <script src="/strings.js"></script><script src="/diagnostics.js"></script><script src="/wav.js"></script><script src="/recorder.js"></script><script src="/setup.js"></script><script src="/group.js"></script><script src="/app.js"></script>
 </body>
 </html>

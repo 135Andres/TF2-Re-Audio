@@ -40,6 +40,12 @@ T14–T17 se pueden desarrollar como una rebanada local aunque T11, T12 y T7 no 
 
 ---
 
+### Tester diagnostics — 2026-10-16
+
+Plan: `docs/superpowers/plans/2026-10-16-tester-diagnostics.md`. New owner **D1 (diagnostics)**: `tf2reaudio/diagnostics.py`, `tests/test_diagnostics.py`, `tf2reaudio/web/diagnostics.js`. `InstanceLock` moved from `server.py` to `util.py` (still importable from `server`) so diagnostics can lock its log without importing the server. D2–D7 sections were implemented inline in the existing owners' files; native Windows checks remain Not run. Released as 0.1.1 (protocol version unchanged).
+
+---
+
 ## Ola 0
 
 ### T0 — Esqueleto del repositorio

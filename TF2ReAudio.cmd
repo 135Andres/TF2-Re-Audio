@@ -32,8 +32,9 @@ if "%~1"=="" (%PY% -m tf2reaudio run) else (%PY% -m tf2reaudio %*)
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" exit /b 0
 echo.
-echo TF2 Re-Audio stopped with error code %RC%. Read the message above.
-echo If you need help, send a screenshot of this window to the group.
+echo ERROR [BOOT_APP_EXIT]: TF2 Re-Audio stopped with error code %RC%. Read the message above.
+echo For help, run "TF2ReAudio.cmd doctor --bundle" and send the ZIP it creates,
+echo or send a screenshot of this window (hide personal folder names).
 pause
 exit /b %RC%
 
@@ -67,7 +68,7 @@ rem The embeddable Python only searches the folders listed in its ._pth file (it
 rem PYTHONPATH and the current folder). ".." is resolved relative to runtime\, i.e. this folder.
 for %%F in ("%RT%\python3*._pth") do echo ..>>"%%F"
 call :try_python "%RT%\python.exe"
-if not defined PY goto :fail_extract
+if not defined PY goto :fail_import
 echo Python %PY_VERSION% is ready.
 echo.
 exit /b 0
@@ -75,7 +76,7 @@ exit /b 0
 rem ---------------------------------------------------------------------------
 :fail_download
 echo.
-echo ERROR: Could not download Python from python.org.
+echo ERROR [BOOT_DOWNLOAD]: Could not download Python from python.org.
 echo Check your internet connection and run TF2ReAudio.cmd again.
 echo Or install Python 3.12 yourself from https://www.python.org/downloads/windows/
 echo and run TF2ReAudio.cmd again.
@@ -84,31 +85,39 @@ exit /b 1
 :fail_hash
 del /f /q "%ZIP%"
 echo.
-echo ERROR: The downloaded Python file is corrupted or not the expected file.
+echo ERROR [BOOT_HASH]: The downloaded Python file is corrupted or not the expected file.
 echo It was deleted. Run TF2ReAudio.cmd again. If this keeps happening, install
 echo Python 3.12 yourself from https://www.python.org/downloads/windows/
 exit /b 1
 
 :fail_extract
 echo.
-echo ERROR: Could not unpack Python into:
+echo ERROR [BOOT_EXTRACT]: Could not unpack Python into:
 echo   "%RT%"
 echo Move the TF2ReAudio folder somewhere you can write to, for example your
 echo Desktop or Documents, and run TF2ReAudio.cmd again.
 exit /b 1
 
+:fail_import
+echo.
+echo ERROR [BOOT_IMPORT]: Python was unpacked but could not start TF2 Re-Audio.
+echo Extract the whole ZIP again into a new folder and run TF2ReAudio.cmd from there.
+exit /b 1
+
 :fail_folder
-echo ERROR: Could not open the folder of this launcher:
+echo ERROR [BOOT_FOLDER]: Could not open the folder of this launcher:
 echo   "%HERE%"
 goto :end_fail
 
 :fail_unzipped
-echo ERROR: The "tf2reaudio" folder was not found next to TF2ReAudio.cmd.
+echo ERROR [BOOT_NOT_EXTRACTED]: The "tf2reaudio" folder was not found next to TF2ReAudio.cmd.
 echo Extract the whole ZIP first (right-click it, then "Extract All..."),
 echo then open the extracted folder and run TF2ReAudio.cmd from there.
 goto :end_fail
 
 :end_fail
 echo.
+echo If you need help, send the code in brackets above and the last step you saw to the
+echo maintainer. A screenshot also helps; hide personal folder names first.
 pause
 exit /b 1
