@@ -17,7 +17,11 @@
       }
       const type = response.headers.get("content-type") || "";
       const body = type.includes("json") ? await response.json() : await response.blob();
-      if (!response.ok) throw new Error(body.error || STRINGS.requestFailed);
+      if (!response.ok) {
+        const error = new Error(body.error || STRINGS.requestFailed);
+        error.status = response.status;
+        throw error;
+      }
       return body;
     },
     get(path) { return this.request(path); },
@@ -101,17 +105,74 @@
       const button = document.createElement("button");
       button.className = "class-card";
       button.type = "button";
-      button.innerHTML = `<span class="class-icon" aria-hidden="true"><img src="/img/${encodeURIComponent(item.id)}.svg" alt=""><span hidden>${escapeHtml(item.name.slice(0, 1))}</span></span>
-        <span class="class-name">${escapeHtml(item.name)}</span><span class="class-progress">${STRINGS.linesStarted(item.completed, item.lines)}</span>
-        <span class="class-progress">${STRINGS.suggested}</span>`;
+      button.dataset.classId = item.id;
+      button.innerHTML = `<span class="class-portrait" aria-hidden="true"><img src="/img/${encodeURIComponent(item.id)}.png" alt="" width="250" height="280"><span hidden>${escapeHtml(item.name.slice(0, 1))}</span></span>
+        <span class="class-name">${escapeHtml(item.name)}</span><span class="class-badge" hidden></span>`;
       button.onclick = () => openClass(item.id).catch(error => notice(error.message, "error"));
       button.querySelector("img").onerror = event => {
         event.target.hidden = true;
-        button.querySelector(".class-icon span").hidden = false;
+        button.querySelector(".class-portrait span").hidden = false;
       };
       grid.append(button);
     }
+    await checkDashboard();
   }
+
+  let checkingDashboard = null;
+  async function checkDashboard() {
+    const firstCard = $("#class-grid").firstElementChild;
+    if (!firstCard || checkingDashboard === firstCard || $("#dashboard-view").hidden || document.hidden) return;
+    checkingDashboard = firstCard;
+    // Shared takes are read once per pass. Recheck bytes on each pass to detect disk changes.
+    const takes = new Map();
+    const checkTake = id => {
+      if (!takes.has(id)) takes.set(id, (async () => {
+        try {
+          const metadata = await api.get(`/api/take/${encodeURIComponent(id)}/metadata`);
+          const audio = await api.get(`/api/take/${encodeURIComponent(id)}/audio`);
+          const digest = await crypto.subtle.digest("SHA-256", await audio.arrayBuffer());
+          const sha = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+          return sha === metadata.sha256 ? "healthy" : "damaged";
+        } catch (error) {
+          return error.status === 404 ? "damaged" : "unchecked";
+        }
+      })());
+      return takes.get(id);
+    };
+    try {
+      await Promise.all([...$("#class-grid").children].map(async card => {
+        let status = "partial";
+        try {
+          const { lines } = await api.get(`/api/lines?class=${encodeURIComponent(card.dataset.classId)}`);
+          const variants = lines.flatMap(line => line.variants);
+          const ids = [...new Set(variants.map(variant => variant.effective).filter(Boolean))];
+          const results = [];
+          for (const id of ids) results.push(await checkTake(id));
+          if (results.includes("damaged")) status = "damaged";
+          else if (results.includes("unchecked")) status = "unchecked";
+          else if (lines.length && variants.length && variants.every(variant => variant.effective)) status = "complete";
+        } catch { status = "unchecked"; }
+        const badge = card.querySelector(".class-badge");
+        card.dataset.audioStatus = status;
+        badge.hidden = status === "partial";
+        badge.className = `class-badge ${status}`;
+        badge.replaceChildren();
+        if (!badge.hidden) {
+          const icon = document.createElement("span");
+          icon.setAttribute("aria-hidden", "true");
+          icon.className = "badge-icon";
+          icon.textContent = status === "complete" ? "✓" : "!";
+          const label = document.createElement("span");
+          label.textContent = status === "complete" ? STRINGS.classComplete : status === "damaged" ? STRINGS.classDamaged : STRINGS.classUnchecked;
+          badge.append(icon, label);
+        }
+      }));
+    } finally { if (checkingDashboard === firstCard) checkingDashboard = null; }
+  }
+  window.addEventListener("focus", checkDashboard);
+  document.addEventListener("visibilitychange", checkDashboard);
+  setInterval(checkDashboard, 30000);
+
   async function openClass(cls) {
     state.cls = cls;
     state.category = "voice_menu";
@@ -157,8 +218,7 @@
     actions.className = "line-actions";
     actions.append(
       button(STRINGS.playOriginal, () => play(`/api/original/${encodeURIComponent(line.id)}`, holder)),
-      button(line.effective ? STRINGS.recordAgain : STRINGS.recordVoice, () => openRecorder(line), "primary"),
-      button(STRINGS.history, () => openHistory(line))
+      button(line.effective ? STRINGS.recordAgain : STRINGS.recordVoice, () => openRecorder(line), "primary")
     );
     if (line.effective) actions.append(button(STRINGS.playTake, () => play(`/api/take/${encodeURIComponent(line.effective)}/audio`, holder)));
     return actions;
@@ -167,6 +227,7 @@
     const actions = document.createElement("div");
     actions.className = "line-actions recovery-actions";
     actions.append(
+      button(STRINGS.history, () => openHistory(line)),
       button(line.state.includes("local_override") ? STRINGS.useCollection : STRINGS.useOriginal,
         () => changeLine("/api/override", line, { use_original: !line.state.includes("local_override") })),
       button(STRINGS.restore, () => changeLine("/api/restore", line)),
@@ -192,11 +253,14 @@
       article.dataset.lineId = line.id;
       article.innerHTML = `<div class="line-summary"><h2 tabindex="-1">${escapeHtml(line.label)}</h2>
         <p class="technical">${STRINGS.replaces(line.files.length)}</p><p class="line-state">${escapeHtml(lineStatus(line))}</p></div>`;
-      article.append(actionsFor(line, article), recoveryFor(line));
+      article.append(actionsFor(line, article));
+      // Secondary actions live behind one disclosure so each row shows only listen and record.
       const details = document.createElement("details");
       details.className = "line-details";
-      details.innerHTML = `<summary>${STRINGS.details}</summary><p class="technical">${escapeHtml(line.id)}</p><p class="help">${STRINGS.restoreHelp}</p><p class="help">${STRINGS.variantHelp}</p>`;
-      details.addEventListener("toggle", () => {
+      details.innerHTML = `<summary>${STRINGS.details}</summary>`;
+      details.append(recoveryFor(line));
+      details.insertAdjacentHTML("beforeend", `<p class="technical">${escapeHtml(line.id)}</p><p class="help">${STRINGS.restoreHelp}</p><p class="help">${STRINGS.variantHelp}</p>`);
+      const populateVariants = () => {
         if (!details.open || details.dataset.loaded) return;
         details.dataset.loaded = "1";
         line.variants.forEach((variant, index) => {
@@ -208,8 +272,10 @@
           row.append(actionsFor({ ...variant, label: `${line.label} · ${STRINGS.variantLabel(index)}` }, row), recoveryFor(variant));
           details.append(row);
         });
-      });
+      };
+      details.addEventListener("toggle", populateVariants);
       details.open = expanded.has(line.id);
+      if (details.open) populateVariants();
       article.append(details);
       list.append(article);
     }
@@ -225,6 +291,13 @@
   function focusLine(lineId) {
     const base = lineId.split("#")[0];
     $(`article[data-line-id="${CSS.escape(base)}"] h2`)?.focus();
+  }
+  function focusRecording(lineId) {
+    const base = lineId.split("#")[0];
+    const article = $(`article[data-line-id="${CSS.escape(base)}"]`);
+    const variant = article?.querySelector(`.variant-row[data-line-id="${CSS.escape(lineId)}"] .primary`);
+    const target = variant?.closest("details").open ? variant : article?.querySelector(":scope > .line-actions .primary");
+    (target || $("#class-title")).focus();
   }
   async function openHistory(line) {
     const data = await api.get(`/api/history?line_id=${encodeURIComponent(line.id)}`);
@@ -243,10 +316,9 @@
       const label = document.createElement("p");
       label.textContent = `${STRINGS.takeLabel(take)}${take.active ? ` · ${STRINGS.activeTake}` : ""}`;
       const audio = document.createElement("audio");
-      audio.controls = true;
       audio.preload = "none";
       audio.src = `/api/take/${encodeURIComponent(take.take_id)}/audio`;
-      row.append(label, audio, button(data.state.includes("conflict") ? STRINGS.resolve : STRINGS.restoreTake, async () => {
+      row.append(label, player(audio), button(data.state.includes("conflict") ? STRINGS.resolve : STRINGS.restoreTake, async () => {
         await changeLine(data.state.includes("conflict") ? "/api/resolve" : "/api/set-active", line, { take_id: take.take_id });
         $("#history-dialog").close();
       }));
@@ -256,16 +328,48 @@
   }
   function play(url, holder) {
     document.querySelectorAll("audio").forEach(audio => audio.pause());
-    let audio = holder.querySelector(".line-preview");
+    let audio = holder.querySelector(":scope > .player > .line-preview");
     if (!audio) {
       audio = document.createElement("audio");
       audio.className = "line-preview";
-      audio.controls = true;
-      holder.append(audio);
+      holder.append(player(audio));
     }
     audio.src = url;
     return audio.play().catch(() => notice(STRINGS.playHelp));
   }
+  // Replaces the browser's native audio controls with a play button, seek bar and time.
+  function player(audio) {
+    const wrap = document.createElement("div");
+    wrap.className = "player";
+    if (audio.parentNode) audio.replaceWith(wrap);
+    audio.controls = false;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "player-toggle";
+    const seek = document.createElement("input");
+    seek.type = "range";
+    seek.max = 1000;
+    seek.setAttribute("aria-label", STRINGS.playerSeek);
+    const time = document.createElement("span");
+    time.className = "player-time";
+    // Voice lines last about a second, so tenths matter.
+    const clock = seconds => Number.isFinite(seconds) ? `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, "0")}` : "0:00.0";
+    const update = () => {
+      toggle.textContent = audio.paused ? "▶" : "❚❚";
+      toggle.setAttribute("aria-label", audio.paused ? STRINGS.playerPlay : STRINGS.playerPause);
+      seek.value = audio.duration ? audio.currentTime / audio.duration * 1000 : 0;
+      seek.style.setProperty("--fill", `${seek.value / 10}%`);
+      time.textContent = `${clock(audio.currentTime)} / ${clock(audio.duration)}`;
+    };
+    for (const event of ["play", "pause", "timeupdate", "durationchange", "ended", "emptied"]) audio.addEventListener(event, update);
+    audio.addEventListener("ended", () => { audio.currentTime = 0; });
+    toggle.onclick = () => audio.paused ? audio.play().catch(() => notice(STRINGS.playHelp)) : audio.pause();
+    seek.oninput = () => { if (audio.duration) audio.currentTime = seek.value / 1000 * audio.duration; };
+    wrap.append(audio, toggle, seek, time);
+    update();
+    return wrap;
+  }
+  player($("#take-preview"));
   function cleanupRecorder() {
     cancelAnimationFrame(state.timer);
     state.recorder?.destroy();
@@ -376,11 +480,13 @@
       notice(result.install_error || STRINGS.savedMessage, result.install_error ? "warning" : "success");
       await refreshState();
       await loadLines();
+      if (!$("#recorder-dialog").open) focusRecording(line.id);
     } catch (error) {
       if (state.recorder !== recorder) { notice(error.message, "error"); return; }
       $("#recorder-error").hidden = false;
       $("#recorder-error").textContent = error.message;
       $("#save-button").disabled = false;
+      $("#save-button").focus();
     }
   }
   async function nextLine(preferMedic = false) {
@@ -425,7 +531,10 @@
       $("#record-button").disabled = false;
     }
   };
-  $("#recorder-dialog").onclose = cleanupRecorder;
+  $("#recorder-dialog").onclose = () => {
+    cleanupRecorder();
+    if (state.recording) focusRecording(state.recording.id);
+  };
   $("#recorder-dialog").oncancel = cleanupRecorder;
   $("#retake-button").onclick = () => openRecorder(state.recording);
   $("#discard-button").onclick = () => $("#recorder-dialog").close();

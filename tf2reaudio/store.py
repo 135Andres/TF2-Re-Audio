@@ -138,8 +138,10 @@ class Store:
                 if self._file.exists():
                     atomic_write(self._bak, self._file.read_bytes())
                 atomic_write(self._file, self._dump())
-        except BaseException:
+        except BaseException as error:
             self._load()  # keep memory equal to disk
+            if isinstance(error, OSError):
+                raise StoreError(f"Could not save the collection: {error}") from error
             raise
 
     # ---- validation ----
@@ -287,7 +289,10 @@ class Store:
         with self._lock:
             path = self._blob_path(sha)
             if not path.exists():
-                atomic_write(path, wav)
+                try:
+                    atomic_write(path, wav)
+                except OSError as error:
+                    raise StoreError(f"Could not save the recording audio: {error}") from error
             take_id = uuid.uuid4().hex
             self._takes[take_id] = {
                 "take_id": take_id, "sha256": sha, "line_id": line_id, "author_member_id": author_member_id,

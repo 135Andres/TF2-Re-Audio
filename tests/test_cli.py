@@ -10,6 +10,7 @@ from unittest import mock
 from tf2reaudio import util
 from tf2reaudio.__main__ import main
 from tests.fixtures.make_vpk import make_vpk
+from tests.test_mp3 import as_installed
 from tests.test_rcon import FakeRcon, free_port
 from tests.test_store import wav
 
@@ -126,7 +127,7 @@ class CliTest(unittest.TestCase):
         self.assertIn("Run `apply` (or restart TF2) to hear it.", out)
         self.assertIn("restart it once", out)
         for name in NAMES[:3]:
-            self.assertEqual((self.tf / "custom" / "tf2reaudio" / name).read_bytes(), data)
+            self.assertEqual((self.tf / "custom" / "tf2reaudio" / name).read_bytes(), as_installed(name, data))
         settings = self.settings()
         self.assertRegex(settings["device_id"], r"^[0-9a-f]{32}$")
         self.assertEqual(settings["rcon_password"], PW)

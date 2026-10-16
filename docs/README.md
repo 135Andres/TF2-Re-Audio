@@ -1,4 +1,6 @@
-# TF2 Re-Audio — local-test candidate
+# TF2 Re-Audio — private local-test candidate
+
+Private candidate for local review; no public release is available.
 
 Record custom TF2 voices on your computer. This candidate supports solo use;
 group sharing is still pending. Windows, real microphones, and the effect of

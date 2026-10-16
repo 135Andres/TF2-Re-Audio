@@ -1,7 +1,6 @@
 """Bridge with the game: installs the active takes in tf/custom/tf2reaudio, asks TF2 to reload sounds
 over RCON, and disables or uninstalls the mod."""
 
-import hashlib
 import json
 import os
 import re
@@ -9,7 +8,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import rcon
+from . import mp3, rcon
 from .util import atomic_write, data_dir
 
 MOD_DIR = "tf2reaudio"  # tf/custom/tf2reaudio/sound/vo/...
@@ -29,6 +28,7 @@ class Game:
         self.data = Path(data) if data else data_dir()
         self.mod = self.tf / "custom" / MOD_DIR
         self.disabled_dir = self.data / "disabled_mod"
+        self.mp3_cache = self.data / "mp3"
         self._settings_path = self.data / "settings.json"
         self._mod_new = False
         self.settings = self._load_settings()
@@ -123,11 +123,13 @@ class Game:
                         dest.unlink()
                         changed += 1
                     continue
-                if dest.is_file() and hashlib.sha256(dest.read_bytes()).hexdigest() == sha:
-                    continue
                 try:
-                    data = self.store.blob(sha)
+                    data = self._content(dest, sha)
                 except KeyError:  # pruned since _wanted()
+                    continue
+                except mp3.Mp3Error:  # unreadable audio: leave the installed file as it is
+                    continue
+                if dest.is_file() and dest.read_bytes() == data:
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write(dest, data)
@@ -140,12 +142,31 @@ class Game:
                     if path not in want and path.is_relative_to(inside):  # stale: no line maps to it
                         path.unlink()
                         changed += 1
+            used = {f"{sha}.mp3" for sha in want.values() if isinstance(sha, str)}
+            for cached in self.mp3_cache.glob("*.mp3"):
+                if cached.name not in used:
+                    cached.unlink()
         finally:
             if changed:
                 self._set(pending_files=self.settings["pending_files"] + changed)
             if created and self.mod.exists():
                 self._note_new_folder()
         return changed
+
+    def _content(self, dest, sha) -> bytes:
+        """Bytes to install for a take. TF2 decodes .mp3 voice files only as MP3 (a renamed WAV plays as
+        silence), so those get an encoded copy, cached so each take is encoded once."""
+        data = self.store.blob(sha)
+        if dest.suffix.lower() != ".mp3":
+            return data
+        cached = self.mp3_cache / f"{sha}.mp3"  # sha is a validated hex digest from the store
+        try:
+            return cached.read_bytes()
+        except FileNotFoundError:
+            encoded = mp3.encode(data)
+            self.mp3_cache.mkdir(parents=True, exist_ok=True)
+            atomic_write(cached, encoded)
+            return encoded
 
     def pending_apply(self) -> int:
         """Files changed in tf/custom since the last successful apply()."""

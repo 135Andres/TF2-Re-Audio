@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tests.fixtures.make_vpk import make_vpk
 from tests.test_rcon import FakeRcon
+from tests.test_mp3 import as_installed
 from tests.test_store import wav
 from tf2reaudio.server import LocalApp, LocalServer, InstanceLock, existing_instance, run_local
 from tf2reaudio.rcon import RconNotRunning
@@ -272,7 +273,7 @@ class ServerTest(unittest.TestCase):
         self.json("/api/override", "POST", {"line_id": "soldier/medic", "use_original": True})
         self.assertFalse((self.app.game.mod / NAMES[0]).exists())
         self.json("/api/override", "POST", {"line_id": "soldier/medic", "use_original": False})
-        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), wav())
+        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), as_installed(NAMES[0], wav()))
         status, _, archive = self.request("/api/export")
         self.json("/api/uninstall", "POST", {"delete_collection": True})
         self.assertEqual(self.app.game.store.history("soldier/medic"), [])
@@ -290,7 +291,7 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(result["result"], "install_failed")
         self.assertIsNotNone(self.app.game.store.take(take["take_id"]))
         self.json("/api/sync-files", "POST", {})
-        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), wav())
+        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), as_installed(NAMES[0], wav()))
 
     def test_invalid_payloads_never_change_collection(self):
         before = self.app.game.store.snapshot()
@@ -383,17 +384,17 @@ class ServerTest(unittest.TestCase):
         self.save_take()
         self.json("/api/disable", "POST", {})
         self.json("/api/disable", "POST", {})
-        self.assertEqual((self.app.game.disabled_dir / NAMES[0]).read_bytes(), wav())
+        self.assertEqual((self.app.game.disabled_dir / NAMES[0]).read_bytes(), as_installed(NAMES[0], wav()))
         self.assertEqual(self.json("/api/apply", "POST", {})[0], 400)
         self.json("/api/enable", "POST", {})
-        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), wav())
+        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), as_installed(NAMES[0], wav()))
 
     def test_concurrent_saves_keep_both_and_install_winner(self):
         with ThreadPoolExecutor(max_workers=2) as pool:
             takes = list(pool.map(self.save_take, (440, 500)))
         self.assertEqual(len(self.app.game.store.history("soldier/medic")), 2)
         active = self.app.game.store.take(self.app.game.store.active("soldier/medic"))
-        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), self.app.game.store.blob(active["sha256"]))
+        self.assertEqual((self.app.game.mod / NAMES[0]).read_bytes(), as_installed(NAMES[0], self.app.game.store.blob(active["sha256"])))
 
     def test_instance_identity_cleanup_and_port_fallback(self):
         self.assertEqual(existing_instance(self.root), self.server.url)

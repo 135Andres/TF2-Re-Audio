@@ -1,4 +1,4 @@
-# Local UI review — 2026-10-13
+# Local UI review — private candidate, 2026-10-15
 
 This is an implementation and fixture-validation report, not a Windows or
 real-game acceptance sign-off. The starting suite had 160 tests, with two
@@ -43,7 +43,7 @@ network tests skipped. Existing uncommitted work was preserved.
   live regions, keyboard focus returns to the changed line, and detail rendering
   is deferred until expanded.
 
-## Validation
+## Historical validation (2026-10-13)
 
 - `python -m unittest`: standard-library suite; optional browser checks are
   skipped unless their environment is configured. Tests use temporary fake TF2
@@ -74,6 +74,43 @@ network tests skipped. Existing uncommitted work was preserved.
   progress, restart acknowledgement, occupied-port fallback, and single-instance
   behavior. Instance messages are captured instead of polluting suite output.
 
+## Current private candidate validation (2026-10-15)
+
+The candidate uses source commit `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c`
+plus the current uncommitted T8 storage recovery and T15 recorder focus changes.
+The exact final ZIP checksum and source identity are recorded separately in
+`docs/agent-reports/05-private-candidate.md` in the source checkout; that report
+is deliberately not packaged, avoiding a self-referential archive checksum.
+
+Fresh Linux checks with Python 3.14.8:
+
+- `python -m unittest`: 198 tests, OK, 9 skipped (seven optional browser checks
+  and two optional real tunnel/network checks).
+- With existing Playwright and Chromium configured, `python -m unittest`:
+  198 tests, OK, 2 skipped (the real tunnel/network checks). All seven browser
+  checks ran, including variant-save focus and failed-save retry. The deliberate
+  duplicate-entry ZIP rejection fixture emits its existing UserWarning.
+- `python -m unittest tests.test_build_zip -v`: 2 tests, OK, no skips.
+- Extracted candidate: `python -m tf2reaudio --version`,
+  `python -m tf2reaudio run --help`, and the Linux launcher's `--version`
+  passed from a path containing spaces. The launcher also ran from a different
+  working directory. Python's ZIP extractor does not restore executable bits;
+  the smoke check restored the archived mode, as described by the README's
+  `chmod +x` fallback.
+- An isolated extracted-process check used temporary data, a synthetic VPK/WAV,
+  disabled Steam discovery and fake loopback RCON on an OS-assigned port.
+  Import installed all three MEDIC! variants; apply sent `snd_restart` to the
+  fake server; `doctor --copy` reported connected without exposing its fixture
+  password; restoring ORIGINAL removed the installed files. A temporary local
+  web server served the page, six JS/CSS resources and `/api/ping` successfully.
+  No real TF2, physical microphone or external service was used.
+
+The final archive is rebuilt after documentation changes. T19's separate report
+records byte equality of two final builds, archive integrity, exact source-byte
+comparison, packaged local assets, launcher permissions and secret/data exclusions.
+This is a private testing candidate. No upload, public release, license selection
+or human acceptance is implied.
+
 ## Candidate packaging (T19)
 
 `python tools/build_zip.py` builds `dist/TF2ReAudio-0.1.0.zip` atomically and prints
@@ -101,5 +138,6 @@ The extracted candidate was checked with `--version` and `run --help`.
 
 No changes to T0–T13 modules are required by these local UI changes. Human
 Windows and TF2 validation remains required before proceeding to collaboration
-or making release claims. T19 must rebuild and publish a release only after the
-remaining acceptance checks and subsequent collaboration work are complete.
+or making release claims. T19 must rebuild the final candidate after the
+remaining acceptance checks.
+Publication remains deferred until the user explicitly authorizes it.

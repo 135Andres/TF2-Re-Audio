@@ -20,7 +20,7 @@ class BuildError(Exception):
     """An expected packaging error with a readable message."""
 
 
-RESOURCE_SUFFIXES = {".py", ".js", ".html", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico"}
+RESOURCE_SUFFIXES = {".py", ".js", ".html", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".ttf"}
 REQUIRED = {
     "TF2ReAudio.cmd": "TF2ReAudio.cmd",
     "tf2reaudio.sh": "tf2reaudio.sh",

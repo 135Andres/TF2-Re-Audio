@@ -23,7 +23,7 @@ On Windows, use `py -3 -c "..."` instead of `python3 -c "..."`, or run `runtime\
 5. With TF2 still closed, run `import-wav soldier/medic beep.wav`. This creates the mod folder, so TF2 mounts it at the next start.
 6. Start TF2 and stay in the main menu. Run `doctor`.
    - Expected: `RCON: connected`.
-   - If it says `not reachable` while TF2 is running with the launch options, and the command took about 3 seconds, write that down. It means TF2 does not answer RCON's end-of-output marker (the echo concern in TASKS.md, Wave 2 milestone), and `rcon.py` must change.
+   - If it says `not reachable` while TF2 is running with the launch options, record the exact redacted error and elapsed time. A roughly three-second failure does not establish missing marker echo. Diagnose launch options, port, authentication and packet behavior before requesting a T3 (`rcon.py`) change.
 7. Join a Casual match as Soldier and press E (MEDIC!). Write down whether you hear the beep.
 8. During the match, in a terminal: `import-wav soldier/medic beep2.wav`, then `apply`.
    - Write down whether the game stuttered and for about how long (none, under 1 s, 1–3 s, more).
@@ -148,3 +148,96 @@ to the real game. Physical
 microphone recording, hearing replacements in the game and `apply` during
 Casual still need real-use results. Browser playback progress is evidence of
 decoding, not a human listening test.
+
+## F. Linux physical microphone session
+
+Use [the Linux session record](linux-real-session-2026-10-15.md) to record
+observations. Run this procedure in a normal desktop browser with a physical
+input. Do not enable fake microphone flags or select an output monitor.
+
+1. Keep TF2 closed for the first recording. Open `http://127.0.0.1:8440`
+   after starting `./tf2reaudio.sh run`. Choose Start solo if prompted.
+2. Open Setup & settings. Export collection if there are existing takes.
+   Record any existing Soldier MEDIC! selection and variant overrides so they
+   can be restored. Remove the old experimental mod with Remove
+   tf2reaudio_test if shown; it can mask the replacement being tested.
+   This removes the experimental folder, so preserve it first if wanted.
+3. Choose Soldier > Start with MEDIC! and record the whole command, rather
+   than a single variant. Select the physical microphone. Allow microphone
+   access for this local page. Record the browser version and input name.
+4. Use Test microphone and speak. Record whether the level moves. Choose
+   Start recording, say a distinctive phrase such as "Linux Medic take one",
+   and Stop after 2–3 seconds. Confirm the browser microphone indicator stops.
+5. Play the preview and listen with headphones. Record whether the phrase is
+   audible and intelligible. Try Retake, then Discard; confirm the microphone
+   stops and no take was saved. Reopen, record the phrase and Save recording.
+   Record any silence/clipping warning and the affected variant filenames.
+6. Reopen and start a short recording, then press Escape. Confirm capture
+   stops. Reopen and let recording reach 10 seconds; confirm it stops itself.
+   Discard that recording. The saved short phrase should remain selected.
+7. In Setup & settings, copy the launch options into Steam, preserving any
+   existing options. These contain a password: do not paste them in the result
+   sheet. Start TF2 after saving, so the new mod folder is mounted.
+8. Run `./tf2reaudio.sh doctor --copy`. Record RCON status and elapsed command
+   time. A timeout is a failure requiring diagnosis; its cause is not proven
+   merely by taking about three seconds.
+9. As Soldier, press E in a local map or Casual. Record the exact context and
+   whether you hear the distinctive phrase. A local map result does not pass
+   the Casual check.
+10. During an actual Casual match, record and save "Linux Medic take two" in
+    the app. Click Apply changes to TF2 (the button includes a change count).
+    Record time from click to completion separately from the perceived game
+    freeze and audio interruption. Press E and listen for take two. Repeat
+    with a third distinguishable take. Never infer heard audio from an apply
+    acknowledgement or from zero pending files.
+11. Run `./tf2reaudio.sh doctor --copy` again and preserve its report. In the
+    result sheet record each attempt, stutter estimate, audio recovery, exact
+    errors with secrets removed, and whether restarting TF2 was needed.
+12. Restore the previous selection from History, or choose Restore original
+    for this collection if it had no custom take. Restore any changed variant
+    selections separately. Apply or restart TF2 and listen again to verify
+    cleanup. Keep recordings in History unless you explicitly want deletion.
+
+If permission is blocked, record the message, allow it in the browser's site
+settings, and retry. If capture fails or is silent, check the selected physical
+input and OS mute state. Record both the failure and retry; do not overwrite
+one with the other. This session does not validate Firefox unless repeated
+there, native Windows, full accessibility, or automatic apply.
+
+## G. Integrated checkpoint — 2026-10-15
+
+The historical 192-test focus failure in section E and the Linux preparation
+record is superseded by the coordinator's current run: `python -m unittest`
+ran 198 tests, OK, 9 skipped. With existing Playwright and Chromium enabled,
+the same suite ran 198 tests, OK, 2 skipped; all seven browser checks ran.
+The skips are the Windows-only data-directory test and the optional real
+network/tunnel test. Packaging tests: 2 passed, no skips. These are fixture
+results, not physical microphone or real-game acceptance.
+
+[Report 05](agent-reports/05-private-candidate.md) identifies the frozen private
+candidate `dist/TF2ReAudio-0.1.0.zip`, SHA-256
+`60c105c1631860e1e516bd524282fd552c9f3a7ffac22b6a6c0fdd954d01ff33`.
+Coordination independently checked its archive integrity and implementation
+bytes. T19 reports repeat-build equality and an extracted fixture workflow.
+The archive contains the guide before this coordinator update: use this current
+guide alongside it, including the corrected timeout diagnosis in A6. T19 owns
+rebuilding with updated packaged guidance and supplying a new checksum.
+Source is HEAD `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c` plus uncommitted
+T8/T15 fixes; it is not a clean release commit.
+
+| Acceptance item | Current evidence | Result |
+|---|---|---|
+| Linux automated local workflow and recorder focus | Coordinator suite; reports 01/02 | Pass with fixtures |
+| Private candidate packaging | Report 05; coordinator archive and packaging checks | Pass for the frozen archive |
+| Linux physical microphone and real TF2/RCON/Casual | Linux session sheet; no assigned 03 report supplied | Not run |
+| Native Windows, bootstrap, locking, microphone and real game | [Prepared Windows sheet](agent-reports/04-windows-validation.md) | Not run |
+| Full accessibility and five-person study | No new human results | Not run |
+
+Keep the Linux session and Windows outcome sheets private alongside the ZIP;
+the builder currently omits those sheets and agent reports. Their links are
+source-checkout references, not files included in the frozen archive. T19 must
+resolve the offline-document handoff; T6 owns the obsolete stub expectations
+in `docs/launchers.md`. No application fix is requested from T3/T9 without
+observed real-game evidence. Wave 2 stays open. Collaboration, automatic apply
+and publication are not authorized by these automated results. See the
+[coordinator report](agent-reports/06-integration-status.md) for owner requests.

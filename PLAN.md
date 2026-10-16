@@ -11,11 +11,21 @@
 | Ola | Estado | Evidencia |
 |---|---|---|
 | **0 · Fundaciones** | **Hecha y en `master` (`ccb7a94`)** — T0–T10 + T7 aislado | `python -m unittest` 173 passed / 7 skipped (2026-10-13, Linux, Chromium opcional). CLI `doctor`/`import-wav`/`apply` funcionan contra fixtures. |
-| **1 · Uso local (web)** | **Candidato privado consolidado en `master` (`ac63a8d`), refuerzos T8 integrados** — T14–T17 + T19 candidato | Última suite Linux con Chromium: 192 pruebas, 1 fallo de foco al guardar una variante y 2 omitidas; corrección T15 en curso. La ejecución anterior de 191 pruebas pasó. CSP de T14 y protección de colección T8 comprobados; ZIP reproducible y recorrido extraído con fixtures verificados. Catálogo y audio original del VPK real comprobados en Linux. Sin validación de micrófono físico, reemplazos dentro del juego ni Windows. |
+| **1 · Uso local (web)** | **Ready for human test on Linux** — base in `master`; T8/T15 fixes verified in the shared, uncommitted checkout | Coordinator run: 198 tests, OK, 9 skipped without browser; 198 tests, OK, 2 skipped with all seven Chromium checks enabled. Variant-save focus and simulated storage failures pass. Private candidate identified in report 05; real microphone, TF2/Casual and native Windows acceptance remain pending. |
 | **2 · Hito humano** | **Bloqueante y pendiente** | Requiere Windows 10/11 nativo + TF2 real en Casual mid-game (`snd_restart`). Sin esto no se autoriza Ola 3. Protocolo en `docs/milestone-wave2.md`. |
 | **3 · Colaboración** | **No iniciada** | Falta `group.py` (T11), `sync.py` (T12), `test_integration_sync.py` (T13), integración de `tunnel.py` y `web/group.js` (T18). |
 | **4 · Usuarios + a11y** | **No iniciada** | 5 personas nuevas, teclado/zoom 200%/lector — criterio: 4/5 completan MEDIC! sin ayuda. |
 | **5 · Release final** | **No iniciada** | T19 se regenera tras Ola 4; T20 solo si la prueba lo pide. |
+
+### Integration checkpoint — 2026-10-15
+
+Source: `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c` plus uncommitted T8/T15 fixes; this is a verified working-tree snapshot, not a merged or clean commit. [Coordinator report](docs/agent-reports/06-integration-status.md) records scope, exact commands, identities and owner requests.
+
+- Reports 01/02: focus restoration and storage error handling verified; no unresolved defect established by the integrated automated checks. ENOSPC is injected at replacement, not physical power-loss testing.
+- Report 05: private ZIP `dist/TF2ReAudio-0.1.0.zip`, SHA-256 `60c105c1631860e1e516bd524282fd552c9f3a7ffac22b6a6c0fdd954d01ff33`; reproducibility and extracted fixture workflow reported by T19, archive integrity and packaged implementation bytes independently checked by coordination. The frozen ZIP predates the coordinator's milestone-guide update; use the current guide as a supplement and ask T19 to rebuild on its next handoff.
+- Assignment 03: its assigned agent report is absent. The existing [Linux session record](docs/linux-real-session-2026-10-15.md) supplies preparation only; physical microphone, real RCON/playback and Casual checks are **Not run**. Its earlier focus failure is historical and superseded by the current Chromium run.
+- Report 04: native Windows checklist prepared; all native outcomes **Not run**. Validate Linux first, then Windows against an identified candidate. Wave 2 remains open; collaboration and automatic apply remain gated.
+- Full accessibility, Firefox, screen readers and the five-person study remain pending. English-only UI and private distribution remain deliberate decisions.
 
 **Preguntas para el evaluador:** ¿Es razonable el orden vertical (validar local antes de red)? ¿Falta algún riesgo de seguridad/integridad en el modelo de datos y sync? ¿El criterio de aceptación de cada ola es verificable? ¿Qué recortarías para llegar a un release local sin colaboración?
 
@@ -30,7 +40,7 @@
 | Hecho | Origen | Confianza |
 |---|---|---|
 | Voces son `.mp3` (44.1 kHz mono) en `tf2_sound_vo_english_dir.vpk`, 12 728 entradas | Índice VPK leído en esta máquina | Verificado |
-| `tf/custom/<mod>/sound/vo/` suena en Casual; WAV renombrado a `.mp3` funciona | Prueba del usuario (Scout) | Verificado |
+| `tf/custom/<mod>/sound/vo/` suena en Casual. Un WAV renombrado a `.mp3` **suena en silencio**: TF2 decodifica por extensión, así que `game.sync_files` instala MP3 real (encoder stdlib `mp3.py`, 128 kbit/s mono) en los `.mp3` y WAV en los `.wav` | Prueba del usuario 2026-10-15 (MEDIC! de las 9 clases, Linux) | Verificado |
 | RCON + `snd_restart` funcionan en el menú; `127.0.0.1` es suficiente | Prueba del usuario | Verificado |
 | TF2 solo monta carpetas nuevas de `tf/custom/` al arrancar; archivos dentro de carpeta ya montada sí se detectan | Motor Source | Verificado localmente |
 | Lanzadores abren con doble clic y descargan Python embeddable verificado en Windows | Código T6 | Probado solo en Linux; Windows documentado en `docs/launchers.md` |
@@ -47,7 +57,7 @@
 |---|---|---|
 | Idioma UI | Solo inglés | Textos centralizados en `web/strings.js` para añadir es después sin reescribir. |
 | Distribución | ZIP con `TF2ReAudio.cmd` + `tf2reaudio.sh` | En Windows descarga Python embeddable oficial (SHA-256 fijado) si falta ≥3.10. Sin admin/winget. |
-| Visibilidad (decisión del usuario, 2026-10-15) | Mantener el proyecto privado por ahora | Solo candidatos locales para revisión; no publicar repositorio, ZIP ni releases. Elección de licencia aplazada. |
+| Visibilidad (decisión del usuario, 2026-10-15, revisada) | Repositorio público en GitHub con licencia MIT | El código es MIT; las imágenes y fuentes de Valve quedan fuera de la licencia (ver `LICENSE`). Releases/ZIP públicos siguen sin decidir. |
 | Prioridad de validación (decisión del usuario, 2026-10-15) | Hacer funcional y comprobar primero el recorrido local en Linux | Windows sigue sin probar y se pospone hasta estabilizar Linux; no impide corregir ni validar el uso local. El hito completo sigue pendiente antes de colaboración. |
 | Código | Paquete Python `tf2reaudio/`, solo stdlib | `__version__ = "0.1.0"`, `PROTOCOL_VERSION = 1`. Persistencia siempre vía `util.atomic_write`. |
 | Descarga futura | GitHub Releases + `GET /download` del host, pendiente de autorización futura | Por ahora se prepara el ZIP local; no se publica ni se habilita descarga pública. |
@@ -141,7 +151,7 @@ T7 no bloquea Olas 1–2. T14 entrega 2 (endpoints de grupo) solo después de T1
 - **RCON real:** si el cliente TF2 no hace eco del paquete vacío, `rcon.py` necesita fallback a "leer solo primer paquete".
 - **`os.replace` en Windows:** puede fallar con `Access is denied` si TF2 tiene el archivo abierto; mitigado cerrando TF2, pero no medido.
 - **Integridad de sync:** T12 debe revalidar todo lo recibido (catálogo, WAV, hash); la red no confía en el cliente.
-- **Atomicidad:** `store`/`server` dependen de `atomic_write` + `.bak`; pruebas de corte de corriente/disco lleno son obligatorias antes de sync.
+- **Atomicity:** T8 now passes injected ENOSPC/replace failures for backup, primary, local state and audio, preserving committed state and referenced blobs. Physical power loss, actual disk exhaustion, short-write and flush/fsync failures remain untested; simulated replacement failures do not establish hardware durability. See report 02 before scoping further T0/T8 work.
 
 ## 11. Cómo evaluar este plan
 
@@ -163,7 +173,7 @@ Esta sección no cambia decisiones vigentes; añade huecos detectados en la revi
 ### 13.1 Legal, licencia y cumplimiento con Valve
 | Hueco | Por qué importa | Qué añadir al plan |
 |---|---|---|
-| Sin `LICENSE` en el repo | La licencia para una distribución pública sigue pendiente | El usuario decidió mantener el proyecto privado. No elegir licencia ni publicar; retomar esta decisión si autoriza una distribución pública |
+| `LICENSE` MIT añadida (2026-10-15) | Las imágenes y fuentes de Valve no se pueden relicenciar | `LICENSE` las excluye explícitamente; revisar si Valve objeta su redistribución |
 | ToS de Steam / VAC | No se ha verificado una garantía de compatibilidad ni aprobación de Valve | Describir el comportamiento verificable: reemplaza audio local bajo `tf/custom` sin modificar binarios. No prometer seguridad frente a VAC ni aprobación de Valve |
 | Uso de `vo_index.txt` y referencia externa | El plan cita `robbilookatme/tf2-voice-pack-reference` sin licencia; riesgo de copiar datos no licenciados | Mantener regla ya escrita en T5 (solo verificación manual) y auditar que ningún fixture/strings copie transcripciones |
 
@@ -200,7 +210,7 @@ Lo ya previsto (Host check, `X-TF2RA`, `X-Frame-Options`, validación WAV/hash/c
 |---|---|---|
 | Migración de esquema | T8 integrado: `collection.json` usa `format_version=1`, acepta el formato anterior sin campo y rechaza versiones futuras sin modificar archivos | T11 debe aplicar la misma protección a `group.json` cuando se autorice la colaboración |
 | Corrupción doble (`json` + `.bak`) | T8 integrado: recuperación desde `.bak` válido; si ambos están dañados se conservan los archivos y audios y se muestra un error claro | Se mantiene la recuperación conservadora en lugar del reinicio vacío automático propuesto por la revisión, para evitar pérdida o confusión de datos |
-| Disco lleno / corte de corriente | `atomic_write+fsync+replace` cubre caso normal | Añadir pruebas de `ENOSPC` y corte a mitad de `atomic_write` antes de Ola 3; `doctor` debe reportar espacio libre en `data_dir()` |
+| Disk full / power loss | T8 replacement-failure injection passes for backup, primary, local state and blobs; StoreError replaces raw OSError | Physical power loss, real disk exhaustion and short-write/fsync failures remain untested. Free-space diagnostics are a separate recommendation, not implemented scope |
 | Logs y diagnóstico | No hay log persistente | Escribir `data_dir()/logs/tf2reaudio.log` rotativo (p. ej. 1 MB, 3 archivos), sin secretos, con nivel INFO; `doctor --copy` lo adjunta opcionalmente |
 | Limpieza | T8 integrado: poda de tomas inactivas >5; GC conserva audios referenciados por colección o respaldo válido, respeta archivos ajenos y exporta solo los referenciados | La limpieza de `disabled_mod` antiguo queda pendiente; no se elimina automáticamente contenido del usuario |
 | Dependencias externas | Python y cloudflared fijados | Documentar EOL de Python 3.12 y política de actualización de `cloudflared` (cuándo se cambia SHA y cómo se comunica) |

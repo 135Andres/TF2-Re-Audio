@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="light">
   <title>TF2 Re-Audio</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
@@ -11,11 +11,12 @@
 <body>
   <a class="skip-link" href="#main" data-text="skip"></a>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">♪</span><span data-text="app"></span></div>
+    <div class="brand" data-text="app"></div>
     <div class="top-status" aria-live="polite">
       <span id="tf-status" class="status-pill" data-text="tfChecking"></span>
       <span id="group-status" class="status-pill" data-text="solo"></span>
       <button id="apply-button" class="button primary" type="button" hidden data-text="apply"></button>
+      <button id="settings-button" class="link-button" type="button" data-text="settings"></button>
     </div>
   </header>
   <main id="main" class="shell" tabindex="-1">
@@ -25,7 +26,7 @@
     <section id="test-mod-notice" class="callout warning" hidden><p data-text="testMod"></p><button id="remove-test-mod" class="button secondary" type="button" data-text="removeTest"></button></section>
 
     <section id="setup-view" class="panel setup-panel" hidden aria-labelledby="setup-title">
-      <p class="eyebrow" data-text="firstUse"></p><h1 id="setup-title" tabindex="-1" data-text="setupTitle"></h1>
+      <h1 id="setup-title" tabindex="-1" data-text="setupTitle"></h1>
       <p class="lede" data-text="setupIntro"></p><div id="setup-error" class="callout warning" role="alert" hidden></div>
       <div class="setup-actions">
         <button id="start-solo" class="button primary" type="button" data-text="startSolo"></button>
@@ -41,16 +42,13 @@
     </section>
 
     <section id="dashboard-view" hidden aria-labelledby="dashboard-title">
-      <div class="hero-row">
-        <div><p class="eyebrow" data-text="collection"></p><h1 id="dashboard-title" tabindex="-1" data-text="chooseClass"></h1><p class="lede" data-text="dashboardIntro"></p></div>
-        <button id="settings-button" class="button secondary" type="button" data-text="settings"></button>
-      </div>
+      <h1 id="dashboard-title" class="dashboard-title" tabindex="-1" data-text="chooseClass"></h1>
       <div id="class-grid" class="class-grid"></div>
     </section>
 
     <section id="class-view" hidden aria-labelledby="class-title">
-      <button id="back-dashboard" class="back-link" type="button" data-text="allClasses"></button>
-      <div class="hero-row class-heading"><div><p class="eyebrow" data-text="class"></p><h1 id="class-title" tabindex="-1"></h1><p id="class-progress" class="lede"></p></div><div class="line-actions"><button id="start-medic" class="button primary" type="button" data-text="startMedic"></button><button id="next-line" class="button secondary" type="button" data-text="nextLine"></button></div></div>
+      <button id="back-dashboard" class="link-button back-link" type="button" data-text="allClasses"></button>
+      <div class="hero-row class-heading"><div><h1 id="class-title" tabindex="-1"></h1><p id="class-progress" class="lede"></p></div><div class="line-actions"><button id="start-medic" class="button primary" type="button" data-text="startMedic"></button><button id="next-line" class="button secondary" type="button" data-text="nextLine"></button></div></div>
       <div class="tabs" role="tablist" data-aria-label="categories">
         <button id="tab-voice_menu" class="tab active" role="tab" aria-selected="true" aria-controls="line-list" data-category="voice_menu" type="button" data-text="voiceMenu"></button>
         <button id="tab-pain_death" class="tab" role="tab" aria-selected="false" aria-controls="line-list" tabindex="-1" data-category="pain_death" type="button" data-text="painDeath"></button>
@@ -64,7 +62,7 @@
     <dialog id="recorder-dialog" class="recorder-dialog" aria-labelledby="recorder-title">
       <form method="dialog" class="dialog-shell" id="recorder-form">
         <button id="close-recorder" class="dialog-close" value="cancel" data-aria-label="closeRecorder">×</button>
-        <p class="eyebrow" data-text="recording"></p><h2 id="recorder-title" data-text="recorderTitle"></h2><p id="recorder-line" class="lede"></p>
+        <h2 id="recorder-title" data-text="recorderTitle"></h2><p id="recorder-line" class="lede"></p>
         <p class="help" data-text="recordingScope"></p><ul id="recorder-files" class="technical"></ul>
         <div class="recorder-controls"><label for="microphone" data-text="microphone"></label><select id="microphone"><option value="" data-text="defaultMicrophone"></option></select><button id="test-mic" class="button secondary" type="button" data-text="testMic"></button></div>
         <label class="check-label"><input id="trim-silence" type="checkbox" checked><span data-text="trimSilence"></span></label>
@@ -72,7 +70,7 @@
         <div class="timer"><span id="timer">00:00.0</span><span>/ 00:10.0</span></div>
         <div id="recorder-error" class="callout error" role="alert" hidden></div>
         <div class="recorder-actions"><button id="record-button" class="button record" type="button" data-text="startRecording"></button><button id="stop-button" class="button secondary" type="button" disabled data-text="stop"></button></div>
-        <audio id="take-preview" class="take-preview" controls hidden></audio><div id="take-warning" class="callout warning" role="status" hidden></div>
+        <audio id="take-preview" class="take-preview" hidden></audio><div id="take-warning" class="callout warning" role="status" hidden></div>
         <div class="review-actions"><button id="retake-button" class="button secondary" type="button" hidden data-text="retake"></button><button id="discard-button" class="button ghost" type="button" hidden data-text="discard"></button><button id="save-button" class="button primary" type="button" hidden data-text="saveRecording"></button></div>
       </form>
     </dialog>
@@ -81,8 +79,8 @@
       <div class="dialog-shell"><form method="dialog"><button class="button secondary" data-text="back"></button></form><h2 id="history-title"></h2><p data-text="historyIntro"></p><div id="history-list" class="line-list"></div></div>
     </dialog>
 
-    <section id="settings-view" class="panel settings-panel" hidden aria-labelledby="settings-title">
-      <button id="back-settings" class="back-link" type="button" data-text="back"></button><p class="eyebrow" data-text="setup"></p><h1 id="settings-title" tabindex="-1" data-text="settings"></h1>
+    <section id="settings-view" class="settings-panel" hidden aria-labelledby="settings-title">
+      <button id="back-settings" class="link-button back-link" type="button" data-text="back"></button><h1 id="settings-title" tabindex="-1" data-text="settings"></h1>
       <div id="settings-message" class="callout" role="status" hidden></div>
       <label for="settings-tf-path" data-text="folder"></label><div class="inline-form"><input id="settings-tf-path" type="text"><button id="settings-save" class="button primary" type="button" data-text="saveFolder"></button></div>
       <h2 data-text="connection"></h2><p class="help" data-text="connectionHelp"></p>
@@ -92,8 +90,8 @@
       <h2 data-text="backup"></h2><p class="help" data-text="backupHelp"></p><button id="export-collection" class="button secondary" type="button" data-text="export"></button>
       <label for="import-file" data-text="chooseZip"></label><div class="inline-form"><input id="import-file" type="file" accept=".zip,application/zip"><button id="import-collection" class="button secondary" type="button" data-text="import"></button></div>
       <div class="settings-danger"><h2 data-text="removeVoices"></h2><p data-text="disableHelp"></p><div class="line-actions"><button id="disable-voices" class="button secondary" type="button" data-text="disable"></button><button id="enable-voices" class="button secondary" type="button" data-text="enable" hidden></button></div>
-        <p data-text="deleteHelp"></p><button id="delete-collection" class="button secondary" type="button" data-text="deleteCollection"></button>
-        <p data-text="uninstallHelp"></p><label class="check-label"><input id="uninstall-delete" type="checkbox"><span data-text="deleteWithUninstall"></span></label><button id="uninstall" class="button secondary" type="button" data-text="uninstall"></button>
+        <p data-text="deleteHelp"></p><button id="delete-collection" class="button danger" type="button" data-text="deleteCollection"></button>
+        <p data-text="uninstallHelp"></p><label class="check-label"><input id="uninstall-delete" type="checkbox"><span data-text="deleteWithUninstall"></span></label><button id="uninstall" class="button danger" type="button" data-text="uninstall"></button>
         <div id="uninstall-guide" class="callout warning" hidden><p data-text="uninstallDone"></p><textarea id="remove-options" readonly data-aria-label="copyOptions"></textarea></div>
       </div>
     </section>

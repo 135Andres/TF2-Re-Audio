@@ -1,3 +1,5 @@
+import errno
+import hashlib
 import itertools
 import json
 import math
@@ -12,6 +14,7 @@ from unittest import mock
 from tf2reaudio.audio import RATE, InvalidWav
 from tf2reaudio.catalog import build
 from tf2reaudio.store import FORMAT_VERSION, KEEP_INACTIVE, ORIGINAL, Store, StoreError, UnsupportedFormat
+from tf2reaudio.util import atomic_write
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vo_index.txt"
 LINE = "soldier/medic"
@@ -212,12 +215,139 @@ class LocalTest(Base):
         t2 = self.take(s, activate=False)
         before = s.snapshot()
         with mock.patch("tf2reaudio.util.os.replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
+            with self.assertRaises(StoreError):
                 s.set_active(LINE, t2)
         self.assertFalse([f for f in self.files(s) if f.endswith(".tmp")])
         self.assertEqual(s.active(LINE), t1)
         self.assertEqual(s.snapshot(), before)
         self.assertEqual(Store(s.root, "a", catalog=self.catalog).snapshot(), before)
+
+
+class WriteFailureTest(Base):
+    def fail_replace(self, target):
+        """Fail only the chosen atomic replacement, after its temp file was written."""
+        replace = os.replace
+        self.write_targets = []
+        self.write_error = OSError(errno.ENOSPC, "No space left on device")
+
+        def injected(source, destination):
+            self.write_targets.append(Path(destination))
+            if Path(destination) == target:
+                self.assertTrue(Path(source).is_file())
+                raise self.write_error
+            return replace(source, destination)
+
+        return mock.patch("tf2reaudio.util.os.replace", side_effect=injected)
+
+    def assert_recoverable(self, store, before):
+        reopened = Store(store.root, store.device_id, catalog=self.catalog)
+        self.assertEqual(store.snapshot(), before)
+        self.assertEqual(reopened.snapshot(), before)
+        self.assertIsNone(reopened.warning)
+        snapshots = [before]
+        backup = store.root / "collection.json.bak"
+        if backup.exists():
+            snapshots.append(json.loads(backup.read_bytes()))
+        for snapshot in snapshots:
+            for take in snapshot["takes"]:
+                data = reopened.blob(take["sha256"])
+                self.assertEqual(hashlib.sha256(data).hexdigest(), take["sha256"])
+        self.assertFalse(list(store.root.rglob("*.tmp")))
+        return reopened
+
+    def test_backup_write_enospc_preserves_committed_collection(self):
+        s = self.store("a")
+        self.take(s)
+        before = s.snapshot()
+        primary = s.root / "collection.json"
+        backup = s.root / "collection.json.bak"
+        old_primary, old_backup = primary.read_bytes(), backup.read_bytes()
+        with self.fail_replace(backup), self.assertRaises(StoreError) as caught:
+            self.take(s, OTHER, activate=False)
+        self.assertIs(caught.exception.__cause__, self.write_error)
+        self.assertIn("collection", str(caught.exception).lower())
+        self.assertEqual(primary.read_bytes(), old_primary)
+        self.assertEqual(backup.read_bytes(), old_backup)
+        self.assertNotIn(primary, self.write_targets)
+        self.assert_recoverable(s, before)
+
+    def test_primary_write_enospc_leaves_reopenable_backup(self):
+        s = self.store("a")
+        self.take(s)
+        before = s.snapshot()
+        primary = s.root / "collection.json"
+        backup = s.root / "collection.json.bak"
+        old_primary = primary.read_bytes()
+        with self.fail_replace(primary), self.assertRaises(StoreError) as caught:
+            self.take(s, OTHER, activate=False)
+        self.assertIs(caught.exception.__cause__, self.write_error)
+        self.assertEqual(self.write_targets[-2:], [backup, primary])
+        self.assertEqual(primary.read_bytes(), old_primary)
+        self.assertEqual(backup.read_bytes(), old_primary)
+        self.assert_recoverable(s, before)
+        # The rotated backup also recovers if the primary is subsequently damaged.
+        atomic_write(primary, b'{"takes": [')
+        restored = Store(s.root, "a", catalog=self.catalog)
+        self.assertIsNotNone(restored.warning)
+        self.assertEqual(restored.snapshot(), before)
+        self.assert_recoverable(restored, before)
+
+    def test_blob_write_failure_does_not_commit_take(self):
+        for existing in (False, True):
+            with self.subTest(existing_collection=existing):
+                s = self.store("existing" if existing else "empty")
+                if existing:
+                    self.take(s)
+                before = s.snapshot()
+                data = wav(987)
+                sha = hashlib.sha256(data).hexdigest()
+                target = s.root / "blobs" / f"{sha}.wav"
+                with self.fail_replace(target), self.assertRaises(StoreError) as caught:
+                    s.add_take(OTHER, data, "member1")
+                self.assertIs(caught.exception.__cause__, self.write_error)
+                self.assertIn("audio", str(caught.exception).lower())
+                self.assertEqual(self.write_targets, [target])
+                self.assertFalse(target.exists())
+                self.assertFalse(s.has_blob(sha))
+                self.assert_recoverable(s, before)
+
+    def test_failed_selection_rolls_back_live_state(self):
+        for filename in ("local.json", "collection.json.bak", "collection.json"):
+            with self.subTest(failed_file=filename):
+                s = self.store("a", name=filename)
+                active = self.take(s)
+                candidate = self.take(s, activate=False)
+                s.mark_shared([x["take_id"] for x in s.snapshot()["takes"]]
+                              + [x["event_id"] for x in s.snapshot()["events"]])
+                before, state = s.snapshot(), s.state(LINE)
+                with self.fail_replace(s.root / filename), self.assertRaises(StoreError):
+                    s.set_active(LINE, candidate)
+                reopened = self.assert_recoverable(s, before)
+                for instance in (s, reopened):
+                    self.assertEqual(instance.active(LINE), active)
+                    self.assertEqual(instance.state(LINE), state)
+                    self.assertEqual(instance.history(LINE), s.history(LINE))
+                s.set_active(LINE, candidate)
+                self.assertEqual(Store(s.root, "a", catalog=self.catalog).active(LINE), candidate)
+
+    def test_failure_plus_gc_protects_durable_audio(self):
+        for filename in ("collection.json.bak", "collection.json"):
+            with self.subTest(failed_file=filename):
+                s = self.store("a", name=filename)
+                for _ in range(KEEP_INACTIVE + 3):
+                    self.take(s)
+                before = s.snapshot()
+                before_backup = (s.root / "collection.json.bak").read_bytes()
+                with self.fail_replace(s.root / filename), self.assertRaises(StoreError):
+                    self.take(s, activate=False)  # pruning must roll back before GC
+                self.assert_recoverable(s, before)
+                if filename.endswith(".bak"):
+                    self.assertEqual((s.root / filename).read_bytes(), before_backup)
+                s._drop_blobs(set())
+                self.assert_recoverable(s, before)
+                snapshots = [before, json.loads((s.root / "collection.json.bak").read_bytes())]
+                expected = {t["sha256"] for snap in snapshots for t in snap["takes"]}
+                self.assertEqual({p.stem for p in (s.root / "blobs").glob("*.wav")}, expected)
 
 
 class MergeTest(Base):

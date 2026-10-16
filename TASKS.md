@@ -30,6 +30,8 @@ Ola 5:            T19 release final y T20 comodidad opcional
 
 **Prioridad del usuario (2026-10-15):** primero completar y comprobar el recorrido funcional local en Linux. Windows aún no se ha probado y su validación se pospone hasta estabilizar Linux; no bloquea mejoras ni pruebas locales. Esto no marca el hito de la Ola 2 como completado ni autoriza iniciar colaboración.
 
+**Current integration — 2026-10-15:** source `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c` plus uncommitted T8/T15 changes passed 198 tests (9 skipped without browser; 2 skipped with all seven Chromium checks). The prior 192-test focus failure is historical. Local Linux implementation is ready for human testing; this is not a clean-commit or Wave 2 acceptance claim. See [report 06](docs/agent-reports/06-integration-status.md). Ownership and the Linux-first gate remain unchanged.
+
 T14–T17 se pueden desarrollar como una rebanada local aunque T11, T12 y T7 no existan. El servidor expone primero solo API local; sus endpoints de grupo se añaden después de T12 bajo el mismo propietario de archivos. T7 no bloquea ningún hito local. T19 se ejecuta dos veces: primero como ZIP candidato y después con la colaboración terminada.
 
 ---
@@ -178,6 +180,8 @@ class Store:
 
 **Refuerzos T8 integrados (2026-10-15, OpenCode/Opus hasta `0c65512`):** formato interno versión 1 compatible con colecciones anteriores; versiones futuras rechazadas antes de recuperar desde respaldo; corrupción doble conserva datos y muestra un error. Importación ZIP limitada a 10.000 entradas y 128 MiB descomprimidos, con rechazo de duplicados y rutas inesperadas. GC conserva la unión de audios referenciados por colección y respaldo, omite limpieza si el respaldo es ilegible/incompatible y respeta archivos ajenos, directorios y enlaces. Las pruebas restauran la retención exacta y detectan la eliminación de cada límite ZIP. Validación del coordinador: suite completa con Chromium, 191 pruebas, OK, 2 omitidas; comprobación adicional de archivos/enlaces/directorios en Linux. Sin validación nativa de Windows ni de audio dentro del juego.
 
+**T8 follow-up verified (2026-10-15):** [report 02](docs/agent-reports/02-storage-recovery.md) covers five added tests with nine injected failure subcases. Failed backup/primary/local-state/blob replacement preserves committed state and backup-referenced audio; persistence errors surface as StoreError. Integrated suite passes. Physical power loss, real disk exhaustion and native Windows locking remain untested; no cross-module implementation fix is currently requested.
+
 ### T9 — Puente con el juego (`game.py`)
 **Archivos:** `tf2reaudio/game.py`, `tests/test_game.py`
 **Depende de:** T1, T2, T3, T5, T8.
@@ -287,6 +291,8 @@ class Group:   # se guarda en data_dir()/group.json; la parte replicable va en e
 - Página de clase: "Start with MEDIC!" / "Continue recording", las pestañas, el buscador, "Pending only", "Next line" y "Details" con las variantes. Las acciones de restaurar van con su alcance escrito (PLAN §7.8), más el historial y los conflictos.
 - **Aceptación:** WCAG 2.2 AA (PLAN §7.9), revisada con `playwright-cli` a 200 % de zoom y navegando solo con teclado.
 
+**T15 follow-up verified (2026-10-15):** [report 01](docs/agent-reports/01-keyboard-focus.md) fixes focus lost when saving rerenders the line list. Current Chromium checks cover variant/whole-line save, Escape, Discard, failed save/retry and subsequent Tab. All seven browser checks ran in the coordinator's 198-test suite, OK, 2 skipped. Full WCAG, physical inputs and native Windows remain pending.
+
 ### T16 — Web: grabadora
 **Archivos:** `tf2reaudio/web/recorder.js`, `web/wav.js`
 - El flujo de PLAN §7.6, completo. Selector de micrófono con `enumerateDevices` y medidor de nivel con `AnalyserNode`. Usa `MediaRecorder` → `decodeAudioData` → `OfflineAudioContext` a 44100 Hz mono → WAV PCM16 en `wav.js`. Recorte de silencio con un umbral y opción para desactivarlo. Corta solo a los 10 s.
@@ -322,6 +328,8 @@ Las tareas de AUDITORIA_UX.md §6 con 5 personas que no conocen el proyecto (Win
 - README: instalar, actualizar (reemplazar la carpeta; los datos viven aparte), desinstalar y qué hacer si algo falla (correr `doctor`).
 
 **Entrega revisada:** implementada la generación reproducible y atómica del ZIP candidato, con exclusión de datos/secretos/cachés y pruebas de integridad. Se ejecuta ahora para validar el recorrido local en Linux y preparar las pruebas posteriores de Windows. Se repetirá para el candidato final privado después de T18 y de la aceptación humana. El candidato actual no demuestra compatibilidad nativa con Windows ni el funcionamiento de los reemplazos dentro de TF2 real.
+
+**T19 current handoff (2026-10-15):** [report 05](docs/agent-reports/05-private-candidate.md) identifies the reproducible private candidate with SHA-256 `60c105c1631860e1e516bd524282fd552c9f3a7ffac22b6a6c0fdd954d01ff33`. Coordinator independently checked archive integrity and implementation bytes, and reran the two packaging tests successfully. The frozen archive predates coordinator changes to `docs/milestone-wave2.md`; current guidance supplements that build. T19 should rebuild with a new checksum after incorporating documentation requests from report 06. No publication or human acceptance is implied.
 
 ### T20 — Comodidad posterior (opcional)
 **Archivos:** los que se definan en una tarea específica después de la prueba con usuarios.

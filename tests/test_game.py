@@ -8,6 +8,7 @@ from tf2reaudio import game as game_mod
 from tf2reaudio.catalog import Line, build
 from tf2reaudio.game import Game
 from tf2reaudio.store import ORIGINAL, Store
+from tests.test_mp3 import as_installed
 from tests.test_rcon import FakeRcon, free_port
 from tests.test_store import FIXTURE, wav
 
@@ -55,7 +56,7 @@ class SyncTest(Base):
         data = self.activate()
         self.assertEqual(self.game.sync_files(), 3)
         for rel in MEDIC:
-            self.assertEqual(self.installed(rel), data)
+            self.assertEqual(self.installed(rel), as_installed(rel, data))
         self.assertEqual(self.game.sync_files(), 0)
         self.assertEqual(self.game.pending_apply(), 3)
 
@@ -64,7 +65,8 @@ class SyncTest(Base):
         self.assertEqual(self.game.sync_files(), 6)
         for i in (1, 2, 3):
             for ext in ("mp3", "wav"):
-                self.assertEqual(self.installed(f"sound/vo/scout_headleft0{i}.{ext}"), data)
+                rel = f"sound/vo/scout_headleft0{i}.{ext}"
+                self.assertEqual(self.installed(rel), as_installed(rel, data))
 
     def test_original_and_local_override_remove_files(self):
         self.activate()
@@ -85,22 +87,22 @@ class SyncTest(Base):
         take = self.store.take(self.store.effective("soldier/medic"))
         (self.store.root / "blobs" / f"{take['sha256']}.wav").unlink()
         self.assertEqual(self.game.sync_files(), 0)
-        self.assertEqual(self.installed(MEDIC[0]), old)
+        self.assertEqual(self.installed(MEDIC[0]), as_installed(MEDIC[0], old))
 
     def test_per_variant_override(self):
         base = self.activate()
         var = self.activate("soldier/medic#02")
         self.assertEqual(self.game.sync_files(), 3)
-        self.assertEqual([self.installed(r) for r in MEDIC], [base, var, base])
+        self.assertEqual([self.installed(r) for r in MEDIC], [as_installed(r, d) for r, d in zip(MEDIC, [base, var, base])])
         self.store.set_active("soldier/medic#02", ORIGINAL)  # the variant keeps priority
         self.assertEqual(self.game.sync_files(), 1)
-        self.assertEqual([self.installed(r) for r in MEDIC], [base, None, base])
+        self.assertEqual([self.installed(r) for r in MEDIC], [as_installed(MEDIC[0], base), None, as_installed(MEDIC[2], base)])
 
     def test_variant_of_twins_covers_mp3_and_wav(self):
         var = self.activate("scout/go_left#03")
         self.assertEqual(self.game.sync_files(), 2)
         self.assertEqual(self.installed("sound/vo/scout_headleft03.wav"), var)
-        self.assertEqual(self.installed("sound/vo/scout_headleft03.mp3"), var)
+        self.assertEqual(self.installed("sound/vo/scout_headleft03.mp3"), as_installed(".mp3", var))
 
     def test_stale_files_removed_only_under_sound_vo(self):
         self.activate()
@@ -144,9 +146,10 @@ class MaliciousTest(Base):
         data = self.activate("../../crafted", store=store)
         game = self.make_game(store, EvilCatalog(files))
         self.assertEqual(game.sync_files(), 1)
-        written = [p for p in self.all_files(self.tmp) if p.read_bytes() == data]
-        blobs = [p for p in written if p.parent.name == "blobs"]
-        self.assertEqual(sorted(set(written) - set(blobs)), [game.mod / "sound" / "vo" / "ok.mp3"])
+        installed = as_installed(".mp3", data)
+        written = [p for p in self.all_files(self.tmp) if p.read_bytes() in (data, installed)]
+        copies = [p for p in written if p.parent.name in ("blobs", "mp3")]  # collection and encoder cache
+        self.assertEqual(sorted(set(written) - set(copies)), [game.mod / "sound" / "vo" / "ok.mp3"])
 
     def test_rejects_paths_the_real_catalog_does_not_know(self):
         class Lying(EvilCatalog):
@@ -259,7 +262,7 @@ class ModFolderTest(Base):
         self.assertFalse(self.game.mod.exists())
         self.game.disable()  # twice is fine
         self.game.enable()
-        self.assertEqual(self.installed(MEDIC[0]), data)
+        self.assertEqual(self.installed(MEDIC[0]), as_installed(MEDIC[0], data))
         self.assertIsNotNone(self.installed("sound/vo/scout_headleft01.wav"))
         self.assertFalse(self.game.disabled_dir.exists())
         self.assertEqual(self.game.sync_files(), 0)
