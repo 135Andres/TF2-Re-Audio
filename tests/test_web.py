@@ -48,6 +48,8 @@ class WebTest(unittest.TestCase):
 
     def browser(self, case):
         env = dict(os.environ, TF2RA_URL=self.server.url, TF2RA_CASE=case, TF2RA_TEMP=str(self.root))
+        if hasattr(self, "remote_group_url"):
+            env.update(TF2RA_REMOTE_URL=self.remote_group_url, TF2RA_INVITE_CODE=self.remote_invite)
         result = subprocess.run(["node", "-e", BROWSER_CHECKS], cwd=Path(__file__).resolve().parent.parent,
                                 env=env, capture_output=True, encoding="utf-8", timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -76,6 +78,27 @@ class WebTest(unittest.TestCase):
         sha = self.seed_dashboard(complete=True)
         (self.app.game.store.root / "blobs" / (sha + ".wav")).unlink()
         self.browser("dashboard-damaged")
+
+    def test_group_join_download_and_manual_apply_button(self):
+        from tf2reaudio.group import Group
+        from tf2reaudio.sync import GroupStore, SyncServer
+        remote = Group.create("Remote friends", "Bob", root=self.root / "remote", device_id="remote")
+        store = GroupStore(self.root / "remote" / "collection", "remote", self.app.catalog)
+        take = store.add_take("soldier/medic", wav(), remote.member_id)
+        store.set_active("soldier/medic", take)
+        host = SyncServer(store, remote).start()
+        self.addCleanup(host.stop)
+        self.remote_group_url, self.remote_invite = host.url, remote.create_invite()
+        with patch("tf2reaudio.server.Syncer.start", return_value=None):
+            self.browser("group-join")
+        self.assertEqual(self.app.game.store.active("soldier/medic"), take)
+        self.assertFalse(self.app.game.mod.exists())
+
+    def test_group_create_invite_roles_and_keyboard_exit(self):
+        self.browser("group")
+        self.assertIsNotNone(self.app.group)
+        self.assertEqual(self.app.group.name, "Friends <test>")
+        self.assertIsNone(self.app.sync_host)
 
     def test_microphone_lifecycle_and_limit(self):
         self.browser("microphone")
@@ -108,9 +131,17 @@ class WebTest(unittest.TestCase):
         self.assertFalse((self.app.game.mod / "sound" / "vo" / "soldier_medic01.mp3").exists())
         self.assertTrue((self.app.game.mod / "sound" / "vo" / "soldier_medic02.mp3").exists())
 
+    def test_first_voice_is_edited_in_header_without_duplicate_variant(self):
+        self.browser("first-variant")
+        self.assertIsNone(self.app.game.store.active("soldier/medic"))
+        self.assertIsNotNone(self.app.game.store.active("soldier/medic#01"))
+        self.assertIsNone(self.app.game.store.active("soldier/medic#02"))
+        self.assertIsNone(self.app.game.store.active("soldier/medic#03"))
+
     def test_recorder_focus_cancel_failure_and_whole_line(self):
         self.browser("recorder-focus")
-        self.assertEqual(len(self.app.game.store.history("soldier/medic")), 1)
+        self.assertEqual(len(self.app.game.store.history("soldier/medic#01")), 1)
+        self.assertEqual(self.app.game.store.history("soldier/medic"), [])
         self.assertEqual(self.app.game.store.history("soldier/medic#02"), [])
 
     def test_conflicts_keep_both_takes_and_resolve_from_history(self):
@@ -170,6 +201,42 @@ const path = require('node:path');
       await page.waitForFunction(() => capturedTracks.length > 0 && capturedTracks.every(track => track.readyState === 'ended'));
     };
     await page.goto(process.env.TF2RA_URL);
+    if (process.env.TF2RA_CASE === 'group-join') {
+      await page.getByRole('button', {name:'Group', exact:true}).click();
+      const dialog = page.locator('#group-dialog');
+      await expectVisible(dialog);
+      await dialog.getByLabel('Your display name').fill('Alice');
+      await dialog.locator('#group-join-link').fill(process.env.TF2RA_REMOTE_URL);
+      await dialog.getByLabel('Invitation code').fill(process.env.TF2RA_INVITE_CODE);
+      await dialog.locator('#group-consent').check();
+      await dialog.getByRole('button', {name:'Join a group', exact:true}).click();
+      await dialog.getByRole('button', {name:'Sync now', exact:true}).click();
+      await expectVisible(page.locator('#apply-button'));
+      assert.match(await page.locator('#apply-button').textContent(), /Apply [1-9]/);
+      assert.match(await dialog.innerText(), /Bob/);
+      await page.keyboard.press('Escape');
+      assert.equal(errors.length, 0, errors.join('\n'));
+      return;
+    }
+    if (process.env.TF2RA_CASE === 'group') {
+      await page.getByRole('button', {name:'Group', exact:true}).click();
+      const dialog = page.locator('#group-dialog');
+      await expectVisible(dialog);
+      await dialog.getByLabel('Your display name').fill('Alice <test>');
+      await dialog.getByLabel('Group name', {exact:true}).fill('Friends <test>');
+      await dialog.getByRole('button', {name:'Create group', exact:true}).click();
+      await expectVisible(dialog.getByRole('button', {name:'Share invite', exact:true}));
+      assert.match(await dialog.innerText(), /Friends <test>/);
+      await dialog.getByRole('button', {name:'Share invite', exact:true}).click();
+      await page.waitForFunction(() => document.querySelector('#group-invitation').value.includes('TF2-'));
+      assert.match(await dialog.locator('#group-invitation').inputValue(), /TF2-/);
+      assert.equal(await dialog.locator('script').count(), 0);
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({state:'hidden'});
+      await page.waitForFunction(() => document.querySelector('#group-button') === document.activeElement);
+      assert.equal(errors.length, 0, errors.join('\n'));
+      return;
+    }
     const dashboardCase = process.env.TF2RA_CASE.startsWith('dashboard-');
     if (dashboardCase) {
       const soldier = page.locator('.class-card[data-class-id="soldier"]');
@@ -202,7 +269,7 @@ const path = require('node:path');
         assert.equal(await soldier.getAttribute('data-audio-status'), 'complete');
         assert.match(await soldier.innerText(), /✓.*All voices replaced/s);
         await soldier.click();
-        await medic().locator('summary').click();
+        await medic().locator('details.line-details > summary').click();
         await click(more(), 'Restore original for this collection');
         await click(page, '← All classes');
         await page.waitForFunction(() => document.querySelector('[data-class-id="soldier"]').dataset.audioStatus === 'partial');
@@ -270,7 +337,7 @@ const path = require('node:path');
       page.once('dialog', dialog => dialog.accept());
       await click(page, 'Remove tf2reaudio_test');
       await page.waitForFunction(() => document.querySelector('#test-mod-notice').hidden);
-      await medic().locator('summary').click();
+      await medic().locator('details.line-details > summary').click();
       await click(more(), 'Use original on my PC only');
       await expectVisible(medic().getByText('Original on this PC only', {exact:false}));
       await click(more(), 'Use collection voice on my PC');
@@ -327,7 +394,7 @@ const path = require('node:path');
           });
         assert(await locator.evaluate(el => el.isConnected && el.getClientRects().length > 0));
       };
-      await medic().locator('summary').click();
+      await medic().locator('.line-toggle').click();
       const row = medic().locator('[data-line-id="soldier/medic#02"]');
       await click(row, 'Record voice');
       await page.keyboard.press('Escape');
@@ -335,8 +402,8 @@ const path = require('node:path');
       await focused(row.getByRole('button',{name:'Record voice',exact:true}));
       await click(row, 'Record voice');
       await record();
-      // Details may close while the modal is open; return to a visible line control.
-      await medic().locator('details').evaluate(el => { el.open = false; });
+      // Simulate the variants closing while the modal is open; return to a visible line control.
+      await medic().locator('.line-toggle').evaluate(el => el.click());
       await click(page, 'Discard');
       await page.waitForFunction(() => !document.querySelector('#recorder-dialog').open);
       await focused(medic().getByRole('button',{name:'Record voice',exact:true}).first());
@@ -356,16 +423,42 @@ const path = require('node:path');
       await focused(medic().getByRole('button',{name:'Record again',exact:true}));
       await page.keyboard.press('Tab');
       await focused(medic().getByRole('button',{name:'Play recording',exact:true}));
+    } else if (process.env.TF2RA_CASE === 'first-variant') {
+      await medic().locator('.line-toggle').click();
+      assert.deepEqual(await medic().locator('.variant-row').evaluateAll(rows => rows.map(row => row.dataset.lineId)),
+        ['soldier/medic#02', 'soldier/medic#03']);
+      await click(medic().locator(':scope > .line-actions'), 'Record voice');
+      assert.match(await page.locator('#recorder-line').textContent(), /Replaces 1 game file$/);
+      await click(page, 'Start recording');
+      await page.waitForTimeout(600);
+      await click(page, 'Stop');
+      await expectVisible(page.getByRole('button',{name:'Save recording',exact:true}));
+      await click(page, 'Save recording');
+      await page.waitForFunction(() => !document.querySelector('#recorder-dialog').open);
+      await expectVisible(medic().locator(':scope > .line-actions').getByRole('button',{name:'Record again',exact:true}));
+      assert.equal(await medic().locator('.variant-row').count(), 2);
     } else if (process.env.TF2RA_CASE === 'variant') {
       await page.getByRole('tab',{name:'Voice menu',exact:true}).focus();
       await page.keyboard.press('End');
       assert.equal(await page.getByRole('tab',{name:'All lines',exact:true}).getAttribute('aria-selected'),'true');
       await page.waitForFunction(() => document.querySelectorAll('#line-list article').length >= 3);
       await page.getByRole('tab',{name:'Voice menu',exact:true}).click();
-      await medic().locator('summary').click();
+      const toggle = medic().getByRole('button', {name:'MEDIC! · Variants',exact:true});
+      await toggle.focus();
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+      await page.keyboard.press('Enter');
       const row = medic().locator('[data-line-id="soldier/medic#02"]');
+      await expectVisible(row);
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+      assert.deepEqual(await medic().locator('.variant-row h3').allTextContents(), ['MEDIC!', 'MEDIC!']);
+      assert(await row.locator('h3').evaluate(el => parseFloat(getComputedStyle(el).fontSize) <
+        parseFloat(getComputedStyle(el.closest('article').querySelector('h2')).fontSize)));
+      await page.keyboard.press('Enter');
+      assert.equal(await row.isVisible(), false);
+      await page.keyboard.press('Enter');
       await click(row, 'Record voice');
-      assert.match(await page.locator('#recorder-line').textContent(), /Variant 02.*1 game file/);
+      assert.match(await page.locator('#recorder-line').textContent(), /MEDIC! · Variant.*1 game file/);
+      assert.doesNotMatch(await page.locator('#recorder-line').textContent(), /Variant \d/);
       await click(page, 'Start recording');
       await page.waitForTimeout(600);
       await click(page, 'Stop');
@@ -388,7 +481,7 @@ const path = require('node:path');
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     } else if (process.env.TF2RA_CASE === 'conflict') {
       await expectVisible(medic().getByText('Conflicting recordings',{exact:false}));
-      await medic().locator('summary').click();
+      await medic().locator('details.line-details > summary').click();
       await click(more(), 'History');
       await expectVisible(page.locator('#history-dialog'));
       assert.equal(await page.locator('#history-dialog audio').count(), 2);

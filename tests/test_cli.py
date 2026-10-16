@@ -193,7 +193,9 @@ class CliTest(unittest.TestCase):
         with mock.patch("tf2reaudio.__main__.run_local", return_value=0) as run:
             self.assertEqual(self.run_cli("run", "--no-browser", "--port", "0")[0], 0)
             run.assert_called_once_with(None, 0, browser=False)
-        self.assertEqual(self.run_cli("host")[0], 1)
+        with mock.patch("tf2reaudio.__main__.run_local", return_value=0) as run:
+            self.assertEqual(self.run_cli("host")[0], 0)
+            run.assert_called_once_with(None, 8440, browser=True)
 
 
 if __name__ == "__main__":

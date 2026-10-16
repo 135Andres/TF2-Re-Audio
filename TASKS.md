@@ -26,6 +26,10 @@ Ola 4:            prueba con 5 personas, accesibilidad y correcciones
 Ola 5:            T19 release final y T20 comodidad opcional
 ```
 
+### Collaboration follow-up — user authorization, 2026-10-15
+
+The user approved applying the collaboration ideation. Wave 3 development is now authorized ahead of the previous Wave 2 sequencing gate; human Windows and TF2 acceptance remains pending. Implementation was performed inline by task stage (T11, T12, T13, T14 delivery 2, T18 and T15 integration). No T8 implementation files were edited. See `docs/collaboration-report.md` for test evidence, the conservative no-prune shared-history policy, limitations and T8/T10/T19 owner requests.
+
 ### Regla de ejecución
 
 **Prioridad del usuario (2026-10-15):** primero completar y comprobar el recorrido funcional local en Linux. Windows aún no se ha probado y su validación se pospone hasta estabilizar Linux; no bloquea mejoras ni pruebas locales. Esto no marca el hito de la Ola 2 como completado ni autoriza iniciar colaboración.

@@ -1,7 +1,7 @@
 # TF2 Re-Audio
 
 Give your favorite TF2 classes your own voice. Record a line, listen, and try it in the game.
-No account needed. Your recordings stay on your computer.
+No account needed. Solo recordings stay on your computer; joining a group shares saved recordings and history with its members.
 
 ## Start
 
@@ -22,6 +22,12 @@ Windows downloads Python if needed on the first launch. Linux needs Python 3.10 
 
 Want the original voices back? In **Setup & settings**, choose **Disable voices**,
 then restart TF2. Your recordings stay saved. Use **Enable voices** to bring them back.
+
+## Sharing with friends
+
+**You and your friend must each install TF2 Re-Audio on your own PC**, and use the same collaboration-enabled build. Each needs TF2 installed to hear the replacements locally. A shared invitation does not install the app or make everyone in the match hear your recordings.
+
+Group sharing is currently a development preview; older ZIPs may support only solo use. Keep internet hosting off until the pending P0 security work is completed. Read the [sharing guide](group-sharing.md) for setup, privacy and invitation details, and the [Windows checklist](windows-security-checklist.md) for the planned native tests.
 
 ## More help
 
@@ -89,5 +95,4 @@ or [report an issue](https://github.com/135Andres/TF2-Re-Audio/issues).
 
 </details>
 
-This early version supports solo use. Group sharing is planned. Voices have been tested
-in TF2 on Linux; Windows testing is still pending.
+Solo use is available. Group sharing is a development preview with security hardening and real-network acceptance pending. Voices have been tested in TF2 on Linux; native Windows testing is still pending.

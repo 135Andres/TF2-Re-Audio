@@ -104,6 +104,50 @@ class SyncTest(Base):
         self.assertEqual(self.installed("sound/vo/scout_headleft03.wav"), var)
         self.assertEqual(self.installed("sound/vo/scout_headleft03.mp3"), as_installed(".mp3", var))
 
+    def test_each_variant_keeps_its_audio_when_base_changes(self):
+        recordings = [self.activate(f"soldier/medic#{i:02d}") for i in (1, 2, 3)]
+        self.assertEqual(self.game.sync_files(), 3)
+        expected = [as_installed(rel, data) for rel, data in zip(MEDIC, recordings)]
+        self.assertEqual([self.installed(rel) for rel in MEDIC], expected)
+
+        self.activate("soldier/medic")
+        self.assertEqual(self.game.sync_files(), 0)
+        self.store.set_active("soldier/medic", ORIGINAL)
+        self.assertEqual(self.game.sync_files(), 0)
+        self.assertEqual([self.installed(rel) for rel in MEDIC], expected)
+
+    def test_variant_replacement_survives_reload_and_can_be_undone(self):
+        base = self.activate()
+        first = self.activate("soldier/medic#02")
+        self.game.sync_files()
+        self.activate("soldier/medic#02")
+        self.assertEqual(self.game.sync_files(), 1)
+
+        self.store = Store(self.store.root, "dev1", catalog=self.catalog)
+        self.game = self.make_game()
+        self.assertEqual(self.game.sync_files(), 0)
+        self.assertEqual(len(self.store.history("soldier/medic#02")), 2)
+        self.store.undo("soldier/medic#02")
+        self.assertEqual(self.game.sync_files(), 1)
+        expected = [as_installed(rel, data) for rel, data in zip(MEDIC, [base, first, base])]
+        self.assertEqual([self.installed(rel) for rel in MEDIC], expected)
+
+    def test_local_variant_override_restores_inheritance_or_own_take(self):
+        base = self.activate()
+        own = self.activate("soldier/medic#03")
+        self.game.sync_files()
+        for number, recording in ((2, base), (3, own)):
+            line_id = f"soldier/medic#{number:02d}"
+            rel = MEDIC[number - 1]
+            with self.subTest(line_id=line_id):
+                self.store.set_local_override(line_id, True)
+                self.assertEqual(self.game.sync_files(), 1)
+                self.assertIsNone(self.installed(rel))
+                self.assertEqual(self.installed(MEDIC[0]), as_installed(MEDIC[0], base))
+                self.store.set_local_override(line_id, False)
+                self.assertEqual(self.game.sync_files(), 1)
+                self.assertEqual(self.installed(rel), as_installed(rel, recording))
+
     def test_stale_files_removed_only_under_sound_vo(self):
         self.activate()
         self.game.sync_files()

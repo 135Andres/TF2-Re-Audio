@@ -13,7 +13,7 @@
 | **0 · Fundaciones** | **Hecha y en `master` (`ccb7a94`)** — T0–T10 + T7 aislado | `python -m unittest` 173 passed / 7 skipped (2026-10-13, Linux, Chromium opcional). CLI `doctor`/`import-wav`/`apply` funcionan contra fixtures. |
 | **1 · Uso local (web)** | **Ready for human test on Linux** — base in `master`; T8/T15 fixes verified in the shared, uncommitted checkout | Coordinator run: 198 tests, OK, 9 skipped without browser; 198 tests, OK, 2 skipped with all seven Chromium checks enabled. Variant-save focus and simulated storage failures pass. Private candidate identified in report 05; real microphone, TF2/Casual and native Windows acceptance remain pending. |
 | **2 · Hito humano** | **Bloqueante y pendiente** | Requiere Windows 10/11 nativo + TF2 real en Casual mid-game (`snd_restart`). Sin esto no se autoriza Ola 3. Protocolo en `docs/milestone-wave2.md`. |
-| **3 · Colaboración** | **No iniciada** | Falta `group.py` (T11), `sync.py` (T12), `test_integration_sync.py` (T13), integración de `tunnel.py` y `web/group.js` (T18). |
+| **3 · Colaboración** | **Implemented in the shared working tree; human network acceptance pending** | T11/T12/T13, separate sync listener, tunnel lifecycle and group UI. Current evidence and limitations: `docs/collaboration-report.md`. |
 | **4 · Usuarios + a11y** | **No iniciada** | 5 personas nuevas, teclado/zoom 200%/lector — criterio: 4/5 completan MEDIC! sin ayuda. |
 | **5 · Release final** | **No iniciada** | T19 se regenera tras Ola 4; T20 solo si la prueba lo pide. |
 
@@ -28,6 +28,13 @@ Source: `b7f9f3b330d8caae743b8e1e93964c8cfea5cd0c` plus uncommitted T8/T15 fixes
 - Full accessibility, Firefox, screen readers and the five-person study remain pending. English-only UI and private distribution remain deliberate decisions.
 
 **Preguntas para el evaluador:** ¿Es razonable el orden vertical (validar local antes de red)? ¿Falta algún riesgo de seguridad/integridad en el modelo de datos y sync? ¿El criterio de aceptación de cada ola es verificable? ¿Qué recortarías para llegar a un release local sin colaboración?
+
+
+### Collaboration implementation authorization — 2026-10-15
+
+The user approved applying `docs/collaboration-ideation.md` after its initial review. This authorizes Wave 3 development ahead of the earlier sequencing gate; it does not complete Wave 2 or native Windows/TF2 acceptance. The shared working tree now contains T11/T12/T13, T14 group endpoints and T18/T15 integration. See [design](docs/collaboration-design.md), [implementation plan](docs/collaboration-implementation-plan.md) and [validation report](docs/collaboration-report.md) for current scope and evidence.
+
+The first collaboration version keeps all shared history rather than applying solo pruning, rejects new client pruning declarations and retries interrupted blobs from byte zero. Solo retention remains unchanged. Public downloads remain disabled. Trusted hosts can relay history; malicious-host provenance protection is outside this version. Grouped recording is supported through the browser; the legacy solo CLI import path needs the T10 handoff described in the report.
 
 ## 2. Objetivo y no-objetivos
 
@@ -231,3 +238,7 @@ Para responder a §11(d), fijar métricas que permitan recortar:
 - **Recorte propuesto si Ola 1 se alarga:** posponer variantes por archivo (`#02`), `Pending only` y `Suggested voice` a T20; mantener solo `soldier/medic` como camino dorado, más `Use original on my PC` y `Undo`. Esto ya es compatible con T8 sin reescribir modelo.
 
 > Historial: v0 esqueleto · v2 incorpora auditoría · v3 adelanta uso local · v4 revisión local (T0–T10 en master, T14–T17 en disco) · **v5 consolida estado 2026-10-15 para evaluación externa sin cambiar decisiones** · **v5.1 añade §13 con huecos detectados en revisión (no cambia decisiones, solo explicita pendientes)**.
+
+## Security planning follow-up — 2026-10-15
+
+The user requested a security-focused next-step plan without implementation, plus explicit installation requirements for both friends. [Security review and plan](docs/security-next-steps.md) records confirmed loopback findings and owner handoffs; [Windows security checklist](docs/windows-security-checklist.md) prepares the 2026-10-16 native session; [sharing guide](docs/group-sharing.md) explains that every participant needs the same collaboration-enabled app build and TF2 locally. P0 hardening is unimplemented. Keep internet hosting off for initial solo Windows validation; a green functional suite is not security acceptance. This follow-up makes no source-code, firewall, runtime or launch-option changes.

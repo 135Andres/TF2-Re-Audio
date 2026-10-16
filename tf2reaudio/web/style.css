@@ -142,9 +142,23 @@ textarea { display: block; width: 100%; min-height: 100px; padding: .75rem; resi
 .line-details { grid-column: 1 / -1; min-width: 0; }
 .line-details > .line-actions { margin: .25rem 0 .75rem; }
 summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--muted); font-size: .9rem; }
-.variant-row, .history-take { padding: 1rem 0; border-top: 1px solid var(--rule); }
-.variant-row .line-state { display: block; margin: .25rem 0 .5rem; }
-.variant-row .line-actions + .line-actions { margin-top: .5rem; }
+.line-toggle { display: inline-flex; align-items: center; gap: .65rem; min-height: 44px; max-width: 100%; padding: .25rem 0; color: inherit; background: transparent; border: 0; cursor: pointer; font: inherit; text-align: left; }
+.line-chevron { flex: none; width: .5rem; height: .5rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); color: var(--accent); }
+.line-toggle[aria-expanded="true"] .line-chevron { transform: rotate(45deg); }
+.variant-hint { padding: .2rem .4rem; color: var(--accent); background: var(--surface-2); border-radius: 2px; font-family: "TF2 Secondary", Verdana, sans-serif; font-size: .75rem; }
+@media (hover: hover) { .line-toggle:hover { color: var(--accent); } }
+@media (prefers-reduced-motion: no-preference) { .line-chevron { transition: transform 150ms cubic-bezier(0.2, 0, 0, 1); } }
+.variant-list { grid-column: 1 / -1; min-width: 0; margin: .5rem 0 .25rem .25rem; padding: .75rem 0 0 1.25rem; border-left: 2px solid var(--accent); }
+.variant-list > .help { margin: 0 0 .75rem; }
+.variant-items { margin: 0; padding: 0; list-style: none; }
+.variant-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .25rem 1rem; padding: .75rem 0; border-top: 1px solid var(--rule); }
+.variant-summary { min-width: 0; }
+.variant-row h3 { display: flex; align-items: center; gap: .55rem; margin: 0; font-size: .9rem; }
+.variant-mark { flex: none; width: 18px; height: 18px; color: var(--accent); fill: none; stroke: currentColor; stroke-width: 3; }
+.variant-row .line-state { display: block; margin: .35rem 0 0 1.7rem; }
+.variant-details, .variant-row > .player { grid-column: 1 / -1; min-width: 0; }
+.variant-details > summary { font-size: .8rem; }
+.history-take { padding: 1rem 0; border-top: 1px solid var(--rule); }
 
 /* Audio player: replaces the browser's native controls. */
 .player { display: flex; align-items: center; gap: .75rem; width: min(100%, 26rem); margin: .5rem 0; padding: 0 .75rem 0 0; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; }
@@ -185,7 +199,7 @@ dialog::backdrop { background: rgb(20 16 12 / .6); }
 
 @media (max-width: 760px) {
   .topbar, .hero-row { align-items: stretch; flex-direction: column; }
-  .line-card { grid-template-columns: minmax(0, 1fr); }
+  .line-card, .variant-row { grid-template-columns: minmax(0, 1fr); }
   .line-card > .line-actions { justify-content: start; }
   .line-tools { align-items: stretch; flex-direction: column; }
   .recorder-controls { grid-template-columns: 1fr; }
@@ -200,3 +214,17 @@ dialog::backdrop { background: rgb(20 16 12 / .6); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 @media (forced-colors: active) { .button, .line-card, input, select { border: 1px solid ButtonText; } }
+
+/* Optional group controls share the existing dialog and form treatments. */
+#group-dialog { padding: clamp(1rem, 4vw, 2rem); overflow-y: auto; overflow-wrap: anywhere; }
+#group-dialog .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+#group-dialog h3 { margin-top: 1.5rem; }
+#group-dialog input[type="text"], #group-dialog input[type="url"] { display: block; width: 100%; min-height: 44px; margin-bottom: .75rem; padding: .55rem .75rem; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 3px; }
+#group-dialog .check-label { margin-block: .75rem; }
+#group-members { padding-left: 1rem; }
+#group-members li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+#group-suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .75rem; }
+#group-suggestions select { display: block; width: 100%; min-width: 0; }
+#group-message { margin-block: 1rem 0; }
+
+#group-status { white-space: normal; overflow-wrap: anywhere; }

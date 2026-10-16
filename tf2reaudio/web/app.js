@@ -34,6 +34,7 @@
     recording: null, previewUrl: null, configured: false, loadVersion: 0
   };
   const setup = new Setup(api, { notice, refreshState, showDashboard });
+  const groupPanel = new GroupPanel(api, { notice, refreshState, showDashboard });
 
   function notice(message, kind = "info") {
     const el = $("#notice");
@@ -61,6 +62,7 @@
     if (line.state.includes("conflict") || line.variants?.some(variant => variant.state.includes("conflict"))) labels.push(STRINGS.conflict);
     if (line.state.includes("local_override")) labels.push(STRINGS.localOverride);
     labels.push(line.effective ? STRINGS.saved : line.has_recording ? STRINGS.variantsRecorded : STRINGS.original);
+    if (line.state.includes("pending_share")) labels.push(STRINGS.groupSavedHere);
     if (line.state.includes("pending_apply") || line.variants?.some(variant => variant.state.includes("pending_apply"))) labels.push(STRINGS.pendingApply);
     else if (line.state.includes("applied_requested")) labels.push(STRINGS.applied);
     return labels.join(" · ");
@@ -77,7 +79,7 @@
     };
     $("#tf-status").textContent = labels[data.tf2] || STRINGS.tfChecking;
     $("#tf-status").className = `status-pill ${data.tf2}`;
-    $("#group-status").textContent = STRINGS.solo;
+    groupPanel.refresh(data.collaboration);
     $("#apply-button").hidden = !data.pending_apply;
     $("#apply-button").disabled = Boolean(data.disabled);
     $("#apply-button").textContent = STRINGS.applyCount(data.pending_apply);
@@ -115,6 +117,7 @@
       };
       grid.append(button);
     }
+    groupPanel.refresh(groupPanel.data);
     await checkDashboard();
   }
 
@@ -172,6 +175,7 @@
   window.addEventListener("focus", checkDashboard);
   document.addEventListener("visibilitychange", checkDashboard);
   setInterval(checkDashboard, 30000);
+  setInterval(() => { if (!document.hidden) refreshState().catch(() => {}); }, 15000);
 
   async function openClass(cls) {
     state.cls = cls;
@@ -238,6 +242,7 @@
   function renderLines() {
     const list = $("#line-list");
     const expanded = new Set([...list.querySelectorAll("article > details[open]")].map(details => details.parentElement.dataset.lineId));
+    const variantsExpanded = new Set([...list.querySelectorAll('.line-toggle[aria-expanded="true"]')].map(toggle => toggle.closest("article").dataset.lineId));
     list.replaceChildren();
     const visible = visibleLines();
     $("#class-progress").textContent = STRINGS.linesShown(visible.length, state.lines.filter(line => line.has_recording).length);
@@ -251,31 +256,69 @@
       const article = document.createElement("article");
       article.className = "line-card";
       article.dataset.lineId = line.id;
+      const mainVoice = line.variants.length > 1 ? { ...line.variants[0], label: line.label } : line;
       article.innerHTML = `<div class="line-summary"><h2 tabindex="-1">${escapeHtml(line.label)}</h2>
-        <p class="technical">${STRINGS.replaces(line.files.length)}</p><p class="line-state">${escapeHtml(lineStatus(line))}</p></div>`;
-      article.append(actionsFor(line, article));
-      // Secondary actions live behind one disclosure so each row shows only listen and record.
+        <p class="technical">${STRINGS.replaces(mainVoice.files.length)}</p><p class="line-state">${escapeHtml(lineStatus({ ...line, effective: mainVoice.effective }))}</p></div>`;
+      article.append(actionsFor(mainVoice, article));
+      if (line.variants.length > 1) {
+        const panel = document.createElement("div");
+        panel.className = "variant-list";
+        panel.id = `variants-${line.id}`;
+        panel.hidden = !variantsExpanded.has(line.id);
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "line-toggle";
+        toggle.setAttribute("aria-label", `${line.label} · ${STRINGS.variants}`);
+        toggle.setAttribute("aria-expanded", String(!panel.hidden));
+        toggle.setAttribute("aria-controls", panel.id);
+        toggle.innerHTML = `<span class="line-chevron" aria-hidden="true"></span>${escapeHtml(line.label)}<span class="variant-hint" aria-hidden="true">${STRINGS.variants}</span>`;
+        article.querySelector("h2").replaceChildren(toggle);
+        const populateVariants = () => {
+          if (panel.childElementCount) return;
+          const help = document.createElement("p");
+          help.className = "help";
+          help.textContent = STRINGS.variantHelp;
+          const variants = document.createElement("ul");
+          variants.className = "variant-items";
+          line.variants.slice(1).forEach(variant => {
+            const row = document.createElement("li");
+            row.className = "variant-row";
+            row.dataset.lineId = variant.id;
+            row.innerHTML = `<div class="variant-summary"><h3><svg class="variant-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/></svg>${escapeHtml(line.label)}</h3>
+              <p class="line-state">${escapeHtml(variant.inherited ? STRINGS.inherited : lineStatus(variant))}</p></div>`;
+            const version = { ...variant, label: `${line.label} · ${STRINGS.variant}` };
+            row.append(actionsFor(version, row));
+            const more = document.createElement("details");
+            more.className = "variant-details";
+            more.innerHTML = `<summary>${STRINGS.details}</summary>`;
+            more.append(recoveryFor(version));
+            row.append(more);
+            variants.append(row);
+          });
+          panel.append(help, variants);
+        };
+        toggle.onclick = () => {
+          panel.hidden = !panel.hidden;
+          toggle.setAttribute("aria-expanded", String(!panel.hidden));
+          if (!panel.hidden) populateVariants();
+        };
+        if (!panel.hidden) populateVariants();
+        article.append(panel);
+      }
+      // Whole-line recovery stays separate from the individual variants.
       const details = document.createElement("details");
       details.className = "line-details";
       details.innerHTML = `<summary>${STRINGS.details}</summary>`;
+      if (mainVoice !== line) {
+        const mainRecovery = document.createElement("div");
+        mainRecovery.innerHTML = `<h3>${STRINGS.mainVoice}</h3>`;
+        mainRecovery.append(recoveryFor(mainVoice));
+        details.append(mainRecovery);
+        details.insertAdjacentHTML("beforeend", `<h3>${STRINGS.allVersions}</h3>`);
+      }
       details.append(recoveryFor(line));
-      details.insertAdjacentHTML("beforeend", `<p class="technical">${escapeHtml(line.id)}</p><p class="help">${STRINGS.restoreHelp}</p><p class="help">${STRINGS.variantHelp}</p>`);
-      const populateVariants = () => {
-        if (!details.open || details.dataset.loaded) return;
-        details.dataset.loaded = "1";
-        line.variants.forEach((variant, index) => {
-          const row = document.createElement("section");
-          row.className = "variant-row";
-          row.dataset.lineId = variant.id;
-          row.innerHTML = `<h3>${STRINGS.variantLabel(index)}</h3><p class="technical">${variant.files.map(escapeHtml).join("<br>")}</p>
-            <p class="line-state">${escapeHtml(variant.inherited ? STRINGS.inherited : lineStatus(variant))}</p>`;
-          row.append(actionsFor({ ...variant, label: `${line.label} · ${STRINGS.variantLabel(index)}` }, row), recoveryFor(variant));
-          details.append(row);
-        });
-      };
-      details.addEventListener("toggle", populateVariants);
+      details.insertAdjacentHTML("beforeend", `<p class="technical">${escapeHtml(line.id)}</p><p class="help">${STRINGS.restoreHelp}</p>`);
       details.open = expanded.has(line.id);
-      if (details.open) populateVariants();
       article.append(details);
       list.append(article);
     }
@@ -296,7 +339,7 @@
     const base = lineId.split("#")[0];
     const article = $(`article[data-line-id="${CSS.escape(base)}"]`);
     const variant = article?.querySelector(`.variant-row[data-line-id="${CSS.escape(lineId)}"] .primary`);
-    const target = variant?.closest("details").open ? variant : article?.querySelector(":scope > .line-actions .primary");
+    const target = variant && !variant.closest(".variant-list").hidden ? variant : article?.querySelector(":scope > .line-actions .primary");
     (target || $("#class-title")).focus();
   }
   async function openHistory(line) {
@@ -314,7 +357,7 @@
       const row = document.createElement("article");
       row.className = "history-take";
       const label = document.createElement("p");
-      label.textContent = `${STRINGS.takeLabel(take)}${take.active ? ` · ${STRINGS.activeTake}` : ""}`;
+      label.textContent = `${STRINGS.takeLabel({ ...take, author_member_id: groupPanel.authorName(take) })}${take.active ? ` · ${STRINGS.activeTake}` : ""}`;
       const audio = document.createElement("audio");
       audio.preload = "none";
       audio.src = `/api/take/${encodeURIComponent(take.take_id)}/audio`;

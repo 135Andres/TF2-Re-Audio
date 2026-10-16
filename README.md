@@ -7,7 +7,7 @@
 
 Record your own versions of TF2 voice lines and hear them in the game.
 Pick a class, record a line, and give it a try. No account needed.
-Your recordings stay on your computer, and you can switch back to the original voices.
+Solo recordings stay on your computer. Group recordings are shared only after you choose to join or create a group. You can switch back to the original voices.
 
 ## Get started
 
@@ -30,6 +30,12 @@ Windows can download Python on the first launch if needed. Linux needs Python 3.
 Later, you can set up **Apply changes** to try new recordings without restarting.
 See the [short user guide](docs/README.md) when you need it.
 
+## Share with friends (development preview)
+
+**Both you and your friend must have TF2 Re-Audio installed on your own PCs**, using the same collaboration-enabled build. Each PC also needs TF2 to hear the shared replacements. An invite does not install the app, and other people in your match will not hear your recordings automatically.
+
+The preview workflow is **Group → Create group → Host for the group → Share invite**; your friend opens **Group → Join a group**. Collaboration is currently in the development working tree, so older ZIPs and the repository download above may not include it. **Internet hosting should stay off until the pending P0 security work is completed.** See the [sharing guide](docs/group-sharing.md), [security plan](docs/security-next-steps.md) and [Windows checklist](docs/windows-security-checklist.md).
+
 <details>
 <summary><strong>Need a hand?</strong></summary>
 
@@ -45,11 +51,11 @@ For more help, see the [user guide](docs/README.md) or [report an issue](https:/
 <details>
 <summary><strong>About this version</strong></summary>
 
-This is an early version for solo use. Group sharing is planned.
+Solo use is available. Group sharing is a development preview with security hardening and real-network acceptance still pending.
 Voices have been tested in TF2 on Linux; Windows testing is still pending.
 
 The app adds custom sound files to TF2's `tf/custom` folder.
-Other players won't hear your recordings through this app.
+Other players only hear the shared replacements if they install and apply the same collection on their own PCs.
 
 Code: [MIT license](LICENSE). TF2 artwork and fonts belong to Valve; see [NOTICE](NOTICE).
 This is a community project, not affiliated with Valve.

@@ -33,6 +33,9 @@ from pathlib import Path
 from . import PROTOCOL_VERSION, __version__, catalog, steam
 from .audio import InvalidWav, MAX_BYTES, inspect_wav
 from .game import Game
+from .group import Group, GroupError
+from .sync import GroupStore, SyncServer, Syncer, SyncError, check_host, join_group
+from .tunnel import Tunnel, TunnelError
 from .store import ORIGINAL, Store, StoreError
 from .util import atomic_write, data_dir, set_low_priority
 from .vpk import VpkError, VpkIndex
@@ -105,6 +108,15 @@ class LocalApp:
         self.setup_error: str | None = None
         self.tf_dir: Path | None = None
         self.connection = "not_configured"
+        self.group = None
+        self.group_error = None
+        self.syncer = None
+        self.sync_host = None
+        self.tunnel = None
+        try:
+            self.group = Group.load(self.root)
+        except GroupError as exc:
+            self.group_error = str(exc)
         chosen = tf_dir or self._saved_tf_dir()
         if chosen is not None:
             try:
@@ -113,6 +125,123 @@ class LocalApp:
                 self.setup_error = str(exc)
         else:
             self._try_auto_detect()
+        self.start_syncer()
+
+    def group_json(self):
+        if self.group is None:
+            return {"status": "solo", "error": self.group_error, "existing_recordings":
+                    len(self.game.store.snapshot()["takes"]) if self.game else 0}
+        group = self.group
+        hosting = bool(self.sync_host and self.tunnel and self.tunnel.running)
+        return {"status": "hosting" if hosting else self.syncer.status if self.syncer else "host_offline",
+                "error": self.syncer.error if self.syncer else self.group_error,
+                "group_id": group.group_id, "name": group.name, "member_id": group.member_id,
+                "is_admin": group.is_admin(group.member_id), "members": group.members(),
+                "suggested_voices": group.suggested_voices(), "hosting": hosting,
+                "url": group.known_hosts()[0] if group.known_hosts() else None,
+                "last_sync": self.syncer.last_sync if self.syncer else None,
+                "pending_share": sum("pending_share" in self.game.store.state(line)
+                                     for line in self.game.store.lines()) if self.game and not self.sync_host else 0,
+                "warning": group.warning}
+
+    def start_syncer(self):
+        if self.group and self.game and self.group.known_hosts() and not self.syncer and not self.sync_host:
+            self.syncer = Syncer(self.game.store, self.group, self.group.known_hosts()[0], self.group.token,
+                                 lock=self._lock)
+            self.syncer.start()
+
+    def close_group(self):
+        # Called outside the app lock on final shutdown.
+        if self.syncer:
+            self.syncer.stop()
+            self.syncer = None
+        if self.tunnel:
+            self.tunnel.stop()
+            self.tunnel = None
+        if self.sync_host:
+            self.sync_host.stop()
+            self.sync_host = None
+
+    def _prepare_group(self, payload):
+        game = self.require_game()
+        if self.group is not None or (self.root / "group.json").exists():
+            raise ServerError("This installation already belongs to a group.")
+        snapshot = game.store.snapshot()
+        if (snapshot["takes"] or snapshot["events"]) and payload.get("share_existing") is not True:
+            raise ServerError("Choose whether to share your existing recordings before joining or creating a group.")
+        if (any(t["device_id"] != game.store.device_id or t["author_member_id"] != "local" for t in snapshot["takes"])
+                or any(e["device_id"] != game.store.device_id for e in snapshot["events"])):
+            raise ServerError("This collection contains imported authors. Export it and use a fresh installation data folder for this group.")
+        if snapshot["takes"] or snapshot["events"]:
+            game.store.export_zip(self.root / ("solo-before-group-" + secrets.token_hex(6) + ".zip"))
+        return game
+
+    def group_action(self, action, payload):
+        if action in ("create", "join"):
+            game = self._prepare_group(payload)
+            if action == "create":
+                self.group = Group.create(payload.get("name"), payload.get("display_name"),
+                                          root=self.root, device_id=game.store.device_id)
+            else:
+                self.group = join_group(payload.get("url"), payload.get("code"), payload.get("display_name"),
+                                        game.store.device_id, self.root)
+            game.store = GroupStore(game.store.root, game.store.device_id, game.catalog)
+            self.start_syncer()
+            return self.group_json()
+        if not self.group:
+            raise ServerError("Create or join a group first.")
+        group = self.group
+        if action == "invite":
+            return {"code": group.create_invite(), "url": self.group_json()["url"]}
+        if action in ("remove", "promote", "suggest"):
+            if action == "remove":
+                group.remove_member(payload.get("member_id"))
+            elif action == "promote":
+                group.promote(payload.get("member_id"))
+            else:
+                group.set_suggested_voice(payload.get("class"), payload.get("member_id"))
+        elif action == "link":
+            check_host(payload.get("url"), group.group_id)
+            if self.syncer:
+                self.syncer.stop()
+                self.syncer = None
+            group.set_host_url(payload["url"])
+            self.start_syncer()
+        elif action == "sync":
+            if self.sync_host:
+                return {"pushed": 0, "pulled": 0, "conflicts": len(self.game.store.conflicts()), "error": None}
+            self.start_syncer()
+            if not self.syncer:
+                raise ServerError("Enter the host link first.")
+            return asdict(self.syncer.run_once())
+        elif action == "host":
+            enabled = payload.get("enabled")
+            if type(enabled) is not bool:
+                raise ServerError("enabled must be true or false.")
+            if enabled and group.verify_token(group.token) is None:
+                raise ServerError("Your group access is no longer valid.")
+            if enabled and self.sync_host is None:
+                if self.game.store.missing_blobs():
+                    raise ServerError("Download missing recordings before hosting.")
+                if self.syncer:
+                    self.syncer.stop()
+                    self.syncer = None
+                host = SyncServer(self.game.store, group, lock=self._lock).start()
+                tunnel = Tunnel(host.port)
+                try:
+                    url = tunnel.start()
+                    group.set_host_url(url)
+                except BaseException:
+                    tunnel.stop()
+                    host.stop()
+                    raise
+                self.sync_host, self.tunnel = host, tunnel
+            elif not enabled:
+                self.close_group()
+                self.start_syncer()
+        else:
+            raise ServerError("Unknown group action.")
+        return self.group_json()
 
     def _saved_tf_dir(self) -> Path | None:
         try:
@@ -142,7 +271,8 @@ class LocalApp:
         tf = check.tf
         archive = VpkIndex(tf / steam.VO_VPK)
         cat = catalog.build(archive.names())
-        store = Store(self.root / "collection", _device_id(self.root), catalog=cat)
+        store_type = GroupStore if self.group else Store
+        store = store_type(self.root / "collection", _device_id(self.root), catalog=cat)
         self.game = Game(tf, store, cat, data=self.root)
         self.catalog = cat
         self.vpk = archive
@@ -151,11 +281,14 @@ class LocalApp:
 
     def configure_tf(self, tf: Path) -> None:
         with self._lock:
+            if self.group and self.game:
+                raise ServerError("Keep the current TF2 folder while connected to this group.")
             if self.tf_dir and Path(tf).resolve() not in {self.tf_dir.resolve(), self.tf_dir.parent.resolve()}:
                 if self.game.mod.exists() or self.game.disabled_dir.exists():
                     raise ServerError("Uninstall the current mod before switching TF2 folders. Keep your collection.")
             self._open(Path(tf))
             self.save_settings(tf_path=str(self.tf_dir))
+            self.start_syncer()
 
     def save_settings(self, **changes):
         game = self.require_game()
@@ -177,9 +310,8 @@ class LocalApp:
                     "Your recording is saved. Could not install all files; close TF2 and retry Apply."}
 
     def line_state(self, line_id):
-        # Sharing is optional and not enabled in this release.
         game = self.require_game()
-        return sorted(game.store.state(line_id) - {"pending_share"})
+        return sorted(game.store.state(line_id) - (set() if self.group and not self.sync_host else {"pending_share"}))
 
     def require_game(self) -> Game:
         if self.game is None:
@@ -243,6 +375,13 @@ class LocalApp:
             "has_recording": any(variant["effective"] for variant in variants),
         }
 
+    def pending_apply(self):
+        game = self.require_game()
+        # Incoming metadata has not been installed yet, so Game's file counter
+        # alone cannot expose the manual Apply action for received recordings.
+        pending_lines = sum("pending_apply" in game.store.state(line) for line in game.store.lines())
+        return max(game.pending_apply(), pending_lines)
+
     def state_json(self) -> dict:
         with self._lock:
             if self.game is None:
@@ -250,7 +389,8 @@ class LocalApp:
                     "app_version": __version__,
                     "protocol_version": PROTOCOL_VERSION,
                     "tf2": "not_configured",
-                    "group": "solo",
+                    "group": self.group_json()["status"],
+                    "collaboration": self.group_json(),
                     "setup_error": self.setup_error,
                     "tf_path": None,
                     "pending_apply": 0,
@@ -260,10 +400,11 @@ class LocalApp:
                 "app_version": __version__,
                 "protocol_version": PROTOCOL_VERSION,
                 "tf2": self.connection,
-                "group": "solo",
+                "group": self.group_json()["status"],
+                    "collaboration": self.group_json(),
                 "setup_error": self.setup_error,
                 "tf_path": str(game.tf),
-                "pending_apply": game.pending_apply(),
+                "pending_apply": self.pending_apply(),
                 "restart_required": game.settings.get("restart_required", False),
                 "disabled": game.disabled_dir.is_dir(),
                 "collection_warning": game.store.warning,
@@ -368,7 +509,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._get(urllib.parse.urlsplit(self.path))
         except ServerError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        except (StoreError, InvalidWav) as exc:
+        except (StoreError, InvalidWav, GroupError, SyncError, TunnelError) as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except (OSError, VpkError) as exc:
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
@@ -391,13 +532,16 @@ class _Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/import":
                 limit = MAX_ZIP
             raw = self._read_body(limit)
-            with self.app._lock:
+            if parsed.path == "/api/group/sync":
                 self._post(parsed, raw)
+            else:
+                with self.app._lock:
+                    self._post(parsed, raw)
         except KeyError:
             self._error(HTTPStatus.BAD_REQUEST, "The requested recording or collection entry is unavailable.")
         except ServerError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
-        except (StoreError, InvalidWav) as exc:
+        except (StoreError, InvalidWav, GroupError, SyncError, TunnelError) as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except (OSError, VpkError) as exc:
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
@@ -426,6 +570,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             with self.app._lock:
                 self._json(HTTPStatus.OK, self.app.state_json())
+            return
+        if path == "/api/group":
+            self._json(200, self.app.group_json())
             return
         if path == "/api/settings":
             with self.app._lock:
@@ -524,6 +671,11 @@ class _Handler(BaseHTTPRequestHandler):
                     "/api/import": {"application/zip", "application/octet-stream"}}.get(path, {"application/json"})
         if content_type not in expected:
             raise ServerError("Incorrect Content-Type for this endpoint.")
+        if path.startswith("/api/group/"):
+            self._json(200, self.app.group_action(path.rsplit("/", 1)[1], _read_json(raw)))
+            return
+        if self.app.group and (path == "/api/import" or (path == "/api/uninstall" and _read_json(raw).get("delete_collection"))):
+            raise ServerError("Keep the group collection intact. Export a backup; importing or deleting a grouped collection is not supported yet.")
         if path == "/api/settings":
             payload = _read_json(raw)
             tf_path = payload.get("tf_path")
@@ -563,7 +715,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not isinstance(line_id, str) or not line_id:
                 raise ServerError("A line_id is required.")
             info = inspect_wav(raw)
-            take_id = game.store.add_take(line_id, raw, "local")
+            take_id = game.store.add_take(line_id, raw, self.app.group.member_id if self.app.group else "local")
             event_id = game.store.set_active(line_id, take_id) if activate else None
             installed = self.app.sync_files()
             self._json(HTTPStatus.CREATED, {"take_id": take_id, "event_id": event_id, **installed,
@@ -862,6 +1014,7 @@ class LocalServer:
         actual_port = int(httpd.server_address[1])
         httpd.shutdown()
         httpd.server_close()
+        self.app.close_group()
         self.httpd = None
         if self._thread:
             self._thread.join()

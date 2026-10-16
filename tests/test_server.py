@@ -69,6 +69,73 @@ class ServerTest(unittest.TestCase):
         status, _, data = self.request(path, method, body)
         return status, json.loads(data)
 
+    def test_group_consent_backup_identity_and_private_status(self):
+        saved = self.save_take()
+        status, _ = self.json("/api/group/create", "POST", {"name": "Friends", "display_name": "Alice"})
+        self.assertEqual(status, 400)
+        status, group = self.json("/api/group/create", "POST", {
+            "name": "Friends", "display_name": "Alice", "share_existing": True})
+        self.assertEqual(status, 200, group)
+        self.assertTrue(group["is_admin"])
+        self.assertTrue(list(self.root.glob("solo-before-group-*.zip")))
+        self.assertIsNotNone(self.app.game.store.take(saved["take_id"]))
+        self.assertNotIn(self.app.group.token, json.dumps(group))
+        status, invite = self.json("/api/group/invite", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(invite["code"].startswith("TF2-"))
+        take = self.save_take(500)
+        self.assertEqual(take["take"]["author_member_id"], self.app.group.member_id)
+        self.assertIn("pending_share", take["state"])
+        for frequency in range(510, 519):
+            self.save_take(frequency)
+        self.assertEqual(len(self.app.game.store.history("soldier/medic")), 11)
+        status, data = self.json("/api/uninstall", "POST", {"delete_collection": True})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.json("/api/group")[0], 200)
+
+    def test_group_hosting_separate_listener_and_cleanup(self):
+        self.json("/api/group/create", "POST", {"name": "Friends", "display_name": "Alice"})
+        with mock.patch("tf2reaudio.server.Tunnel") as tunnel:
+            tunnel.return_value.start.return_value = "https://fixture.trycloudflare.com"
+            tunnel.return_value.running = True
+            status, data = self.json("/api/group/host", "POST", {"enabled": True})
+            self.assertEqual(status, 200, data)
+            self.assertTrue(data["hosting"])
+            self.assertNotEqual(self.app.sync_host.port, self.server.port)
+            port = self.app.sync_host.port
+            self.json("/api/group/host", "POST", {"enabled": False})
+            tunnel.return_value.stop.assert_called()
+            self.assertIsNone(self.app.sync_host)
+        with self.assertRaises(OSError):
+            socket.create_connection(("127.0.0.1", port), timeout=1)
+
+    def test_group_join_sync_is_manual_apply_and_wrong_link_preserves_identity(self):
+        from tf2reaudio.group import Group
+        from tf2reaudio.store import Store
+        from tf2reaudio.sync import SyncServer
+        remote = Group.create("Remote", "Bob", root=self.root / "remote", device_id="remote")
+        store = Store(self.root / "remote" / "collection", "remote", self.app.catalog)
+        take = store.add_take("soldier/medic", wav(), remote.member_id)
+        store.set_active("soldier/medic", take)
+        host = SyncServer(store, remote).start()
+        self.addCleanup(host.stop)
+        with mock.patch("tf2reaudio.server.Syncer.start", return_value=None):
+            status, group = self.json("/api/group/join", "POST", {
+                "url": host.url, "code": remote.create_invite(), "display_name": "Alice", "share_existing": True})
+        self.assertEqual(status, 200, group)
+        with mock.patch.object(self.app.game, "apply") as apply:
+            status, result = self.json("/api/group/sync", "POST", {})
+            self.assertEqual(status, 200, result)
+            self.assertIsNone(result["error"])
+            apply.assert_not_called()
+        self.assertEqual(self.app.game.store.active("soldier/medic"), take)
+        self.assertFalse(self.app.game.mod.exists())
+        self.assertGreater(self.json("/api/state")[1]["pending_apply"], 0)
+        status, result = self.json("/api/group/link", "POST", {"url": host.url})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.app.group.group_id, remote.group_id)
+        self.app.close_group()
+
     def test_ping_state_and_catalog(self):
         status, data = self.json("/api/ping")
         self.assertEqual(status, 200)

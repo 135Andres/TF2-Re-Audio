@@ -194,8 +194,8 @@ def cmd_run(args) -> int:
 
 
 def cmd_host(args) -> int:
-    print("Group hosting is not available yet. Use `run` for the local app.", file=sys.stderr)
-    return 1
+    print("Open Group in the local app, then enable Host for the group.")
+    return run_local(Path(args.tf) if args.tf else None, args.port, browser=True)
 
 
 def cmd_lines(args) -> int:
@@ -218,7 +218,7 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=8440, help="local HTTP port (default: 8440)")
     p.add_argument("--no-browser", action="store_true", help="print the local URL without opening a browser")
     p.set_defaults(func=cmd_run)
-    p = sub.add_parser("host", help="Start the local app; group hosting is added later")
+    p = sub.add_parser("host", help="Open local group controls; enable hosting in the browser")
     p.add_argument("--tf", help=tf_help)
     p.add_argument("--port", type=int, default=8440, help="local HTTP port (default: 8440)")
     p.set_defaults(func=cmd_host)

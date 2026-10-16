@@ -16,6 +16,7 @@
       <span id="tf-status" class="status-pill" data-text="tfChecking"></span>
       <span id="group-status" class="status-pill" data-text="solo"></span>
       <button id="apply-button" class="button primary" type="button" hidden data-text="apply"></button>
+      <button id="group-button" class="link-button" type="button" data-text="groupButton"></button>
       <button id="settings-button" class="link-button" type="button" data-text="settings"></button>
     </div>
   </header>
@@ -30,7 +31,7 @@
       <p class="lede" data-text="setupIntro"></p><div id="setup-error" class="callout warning" role="alert" hidden></div>
       <div class="setup-actions">
         <button id="start-solo" class="button primary" type="button" data-text="startSolo"></button>
-        <button id="show-join" class="button secondary" type="button" disabled data-title="groupSoon"><span data-text="join"></span> <span class="soon" data-text="soon"></span></button>
+        <button id="show-join" class="button secondary" type="button" data-text="join"></button>
         <button id="choose-folder" class="button secondary" type="button" data-text="chooseFolder"></button>
       </div>
       <div class="folder-form">
@@ -96,7 +97,34 @@
       </div>
     </section>
   </main>
+  <dialog id="group-dialog" aria-labelledby="group-title">
+    <div class="dialog-header"><h2 id="group-title" tabindex="-1" data-text="groupTitle"></h2><button id="group-close" class="button secondary" type="button" data-text="groupClose"></button></div>
+    <p id="group-detail-status" class="help" role="status" aria-live="polite"></p>
+    <p data-text="groupPrivacy"></p><p class="help" data-text="groupTrust"></p>
+    <div id="group-solo-controls">
+      <p id="group-existing"></p>
+      <label for="group-display-name" data-text="displayName"></label><input id="group-display-name" maxlength="80" autocomplete="nickname" type="text">
+      <label for="group-name" data-text="groupName"></label><input id="group-name" maxlength="80" type="text">
+      <label class="check-label"><input id="group-consent" type="checkbox"><span data-text="groupConsent"></span></label>
+      <button id="group-create" class="button primary" type="button" data-text="createGroup"></button>
+      <label for="group-join-link" data-text="hostLink"></label><input id="group-join-link" type="url" autocomplete="off" placeholder="https://…">
+      <label for="group-code" data-text="inviteCode"></label><input id="group-code" type="text" autocomplete="off" spellcheck="false">
+      <button id="group-join" class="button secondary" type="button" data-text="joinGroup"></button>
+    </div>
+    <div id="group-member-controls" hidden>
+      <p id="group-name-display"></p>
+      <div class="line-actions"><button id="group-invite" class="button secondary" type="button" data-text="shareInvite"></button><button id="group-sync" class="button secondary" type="button" data-text="syncNow"></button></div>
+      <div id="group-invitation-area" hidden><label for="group-invitation" data-text="shareInvite"></label><textarea id="group-invitation" readonly></textarea><button id="group-copy" class="button secondary" type="button" data-text="copyInvite"></button></div>
+      <h3 data-text="hostForGroup"></h3><p class="help" data-text="hostingHelp"></p>
+      <button id="group-host" class="button secondary" type="button" data-text="hostForGroup"></button>
+      <label for="group-update-link" data-text="hostLink"></label><input id="group-update-link" type="url" autocomplete="off">
+      <button id="group-update" class="button secondary" type="button" data-text="updateLink"></button>
+      <h3 data-text="groupMembers"></h3><ul id="group-members" class="install-list"></ul>
+      <h3 data-text="groupSuggestions"></h3><div id="group-suggestions"></div>
+    </div>
+    <p id="group-message" role="status" aria-live="polite"></p>
+  </dialog>
   <footer class="footer"><span data-text="footer"></span> <span id="app-version"></span></footer>
-  <script src="/strings.js"></script><script src="/wav.js"></script><script src="/recorder.js"></script><script src="/setup.js"></script><script src="/app.js"></script>
+  <script src="/strings.js"></script><script src="/wav.js"></script><script src="/recorder.js"></script><script src="/setup.js"></script><script src="/group.js"></script><script src="/app.js"></script>
 </body>
 </html>
