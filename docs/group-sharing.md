@@ -13,16 +13,18 @@ The workflow below describes the preview controls for a later supervised test. I
 ## Host
 
 1. Open your installed app and confirm your TF2 folder.
-2. Open **Group → Create group**, enter a group name and your display name, and choose whether to share saved recordings/history. Existing recordings require explicit consent; a local backup is kept before joining/creating.
-3. Enable **Host for the group**. This PC keeps sharing available while its app and tunnel are running. Hosting does not grant admin permissions.
-4. Choose **Share invite** and send the complete host link and code privately to your friend. If hosting is off, a generated code alone will not provide a working host link.
+2. Open **Group → Invite friends → Create group**, enter a group name and your display name, and choose whether to share saved recordings/history. Existing recordings require explicit consent; a local backup is kept before joining/creating.
+3. Enable **Start sharing**. This PC keeps sharing available while its app and tunnel are running. Hosting does not grant admin permissions.
+4. Choose **Share invite → Copy invitation** and send the whole message privately to one friend. It contains a link to their local Join friends screen, a separate single-use code and fallback instructions. Invitations are available when hosting here or synced with the current host; this status is not a guarantee of continued availability. Keep the host app open.
 
 ## Friend
 
 1. Install and open the same TF2 Re-Audio build on your PC; confirm your own TF2 folder.
-2. Open **Group → Join a group**, paste the host link and invitation code, and enter your display name.
-3. Review the sharing consent and join. **Sync now** can retry sharing while the host is available.
+2. Open the invitation link. It opens **Join friends** in your own running app and fills the host address; enter the separate invitation code and your display name if blank. Opening a link never joins automatically.
+3. If the link does not open, go to **Group → Join friends → Have an invitation? Paste it here**, paste the whole message and choose **Use invitation**. The link targets the default local port 8440; pasting works when your app uses another port. A link cannot start an app that is closed. Review the host under **Connection details**, review the sharing consent and choose **Join a group**. **Sync now** can retry sharing while the host is available.
 4. Preview received recordings, then use **Apply changes** on your own PC or restart TF2. Joining never automatically reloads game audio.
+
+Manage members, suggested voices and a changed host address under **Members and advanced settings**.
 
 Only PCs that install and apply the shared collection hear the replacements. People in the same Casual match do not automatically hear them. The microphone is used for saved recordings, not live group voice chat.
 

@@ -5,17 +5,24 @@ class GroupPanel {
     this.hooks = hooks;
     this.data = { status: "solo" };
     this.dialog = document.querySelector("#group-dialog");
+    window.addEventListener("hashchange", () => this.openInvitation().catch(error => this.message(error.message)));
     this.bind("#group-button", () => this.open());
-    this.bind("#show-join", () => this.open());
+    this.bind("#show-join", () => this.open("join"));
+    this.bind("#group-choose-invite", () => this.choose("create"));
+    this.bind("#group-choose-join", () => this.choose("join"));
+    this.bind("#group-use-invitation", () => this.useInvitation(this.el("#group-paste").value));
     this.bind("#group-close", () => this.dialog.close());
     this.dialog.onclose = () => document.querySelector("#group-button").focus();
     this.bind("#group-create", () => this.createOrJoin("create"));
     this.bind("#group-join", () => this.createOrJoin("join"));
     this.bind("#group-invite", async () => {
+      if (!this.readyToInvite()) throw new Error(STRINGS.sharingNotReady);
       const result = await this.api.post("/api/group/invite", {});
-      this.el("#group-invitation").value = [result.url, result.code].filter(Boolean).join("\n");
+      if (!result.url) throw new Error(STRINGS.sharingNotReady);
+      const link = "http://127.0.0.1:8440/#join?host=" + encodeURIComponent(this.hostUrl(result.url));
+      this.invitationHost = result.url;
+      this.el("#group-invitation").value = [link, result.code, "", STRINGS.inviteInstructions].join("\n");
       this.el("#group-invitation-area").hidden = false;
-      if (!result.url) this.message(STRINGS.inviteNeedsHost);
     });
     this.bind("#group-copy", async () => {
       const text = this.el("#group-invitation");
@@ -64,15 +71,62 @@ class GroupPanel {
     this.el("#group-code").value = "";
     await this.reload();
     this.el("#group-title").focus();
-    this.message(STRINGS.groupJoined);
+    this.message(action === "create" ? STRINGS.groupCreated : STRINGS.groupJoined);
   }
   async reload() {
     this.render(await this.api.get("/api/group"));
     await this.hooks.refreshState();
   }
-  async open() {
+  choose(mode) {
+    this.message("");
+    this.el("#group-form").hidden = false;
+    this.el("#group-flow-title").textContent = mode === "create" ? STRINGS.inviteFriends : STRINGS.join;
+    this.el("#group-create-fields").hidden = mode !== "create";
+    this.el("#group-create").hidden = mode !== "create";
+    this.el("#group-join-fields").hidden = mode !== "join";
+    this.el("#group-paste-area").hidden = mode !== "join";
+    this.el("#group-join").hidden = mode !== "join";
+  }
+  hostUrl(value) {
+    const url = new URL(value);
+    if (url.username || url.password || url.hash || url.search ||
+        !(url.protocol === "https:" || (url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) {
+      throw new Error(STRINGS.invalidInvitation);
+    }
+    return value;
+  }
+  useInvitation(text) {
+    try {
+      const candidate = text.trim().split(/\s+/)[0];
+      const link = new URL(candidate);
+      let host;
+      if (link.hash.startsWith("#join?")) {
+        if (link.protocol !== "http:" || link.hostname !== "127.0.0.1") throw new Error();
+        host = new URLSearchParams(link.hash.slice(6)).get("host");
+      } else host = candidate;
+      host = this.hostUrl(host);
+      const code = text.match(/\bTF2-(?:[A-Z0-9]{4}-){1,2}[A-Z0-9]{4}\b/i)?.[0] || "";
+      this.el("#group-join-link").value = host;
+      this.el("#group-code").value = code.toUpperCase();
+      this.el("#group-address").open = false;
+      this.el("#group-paste-area").open = false;
+      this.message(STRINGS.inviteReview);
+      this.el(code ? "#group-display-name" : "#group-code").focus();
+    } catch { throw new Error(STRINGS.invalidInvitation); }
+  }
+  async openInvitation() {
+    if (!location.hash.startsWith("#join?")) return;
+    const invitation = location.href;
+    history.replaceState(null, "", location.pathname + location.search);
+    await this.open("join");
+    if (this.data.status !== "solo") { this.message(STRINGS.alreadyGrouped); return; }
+    this.useInvitation(invitation);
+  }
+  readyToInvite() { return Boolean(this.data.url && (this.data.hosting || this.data.status === "synced")); }
+  async open(mode) {
     await this.reload();
     if (!this.dialog.open) this.dialog.showModal();
+    if (mode && this.data.status === "solo") this.choose(mode);
     this.el("#group-title").focus();
   }
   authorName(take) {
@@ -80,6 +134,13 @@ class GroupPanel {
   }
   refresh(data) {
     this.data = data || { status: "solo" };
+    this.el("#group-invite").disabled = !this.readyToInvite();
+    this.el("#group-invite-help").textContent = this.readyToInvite() ? STRINGS.sharingReady : STRINGS.sharingNotReady;
+    if (!this.readyToInvite() || (this.invitationHost && this.invitationHost !== this.data.url)) {
+      this.el("#group-invitation-area").hidden = true;
+      this.el("#group-invitation").value = "";
+    }
+
     const labels = { solo: STRINGS.solo, hosting: STRINGS.groupHosting, synced: STRINGS.groupSynced,
       auth_failed: STRINGS.groupAuth, update_required: STRINGS.groupUpdate };
     const label = labels[this.data.status] || STRINGS.groupOffline(this.data.pending_share || 0);

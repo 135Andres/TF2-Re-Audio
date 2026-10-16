@@ -619,5 +619,6 @@
       if (data.setup_error) { $("#setup-error").hidden = false; $("#setup-error").textContent = data.setup_error; }
       await setup.load();
     }
+    await groupPanel.openInvitation();
   })().catch(error => notice(error.message, "error"));
 })();

@@ -94,6 +94,15 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.app.game.store.active("soldier/medic"), take)
         self.assertFalse(self.app.game.mod.exists())
 
+    def test_group_host_generates_local_join_link(self):
+        from unittest.mock import PropertyMock
+        with patch("tf2reaudio.server.Tunnel.start", return_value="https://friends.example"), \
+             patch("tf2reaudio.server.Tunnel.running", new_callable=PropertyMock, return_value=True):
+            self.browser("group-host")
+
+    def test_group_invitation_paste_fallback(self):
+        self.browser("group-paste")
+
     def test_group_create_invite_roles_and_keyboard_exit(self):
         self.browser("group")
         self.assertIsNotNone(self.app.group)
@@ -202,34 +211,73 @@ const path = require('node:path');
     };
     await page.goto(process.env.TF2RA_URL);
     if (process.env.TF2RA_CASE === 'group-join') {
-      await page.getByRole('button', {name:'Group', exact:true}).click();
+      await page.goto(process.env.TF2RA_URL + '/#join?host=' + encodeURIComponent(process.env.TF2RA_REMOTE_URL));
       const dialog = page.locator('#group-dialog');
       await expectVisible(dialog);
+      assert.equal(await dialog.locator('#group-join-link').inputValue(), process.env.TF2RA_REMOTE_URL);
+      assert.equal(await dialog.locator('#group-create').isVisible(), false);
+      assert.equal(await dialog.locator('#group-member-controls').isVisible(), false);
+      assert.equal(await page.evaluate(() => location.hash), '');
       await dialog.getByLabel('Your display name').fill('Alice');
-      await dialog.locator('#group-join-link').fill(process.env.TF2RA_REMOTE_URL);
+      await dialog.getByLabel('Invitation code').fill('TF2-0000-0000-0000');
+      await dialog.getByRole('button', {name:'Join a group', exact:true}).click();
+      await page.waitForFunction(() => document.querySelector('#group-message').textContent.length > 0);
+      assert.equal(await dialog.locator('#group-member-controls').isVisible(), false);
+      assert.equal(await dialog.locator('#group-join-link').inputValue(), process.env.TF2RA_REMOTE_URL);
       await dialog.getByLabel('Invitation code').fill(process.env.TF2RA_INVITE_CODE);
       await dialog.locator('#group-consent').check();
       await dialog.getByRole('button', {name:'Join a group', exact:true}).click();
       await dialog.getByRole('button', {name:'Sync now', exact:true}).click();
       await expectVisible(page.locator('#apply-button'));
       assert.match(await page.locator('#apply-button').textContent(), /Apply [1-9]/);
+      await dialog.getByText('Members and advanced settings', {exact:true}).click();
       assert.match(await dialog.innerText(), /Bob/);
       await page.keyboard.press('Escape');
       assert.equal(errors.length, 0, errors.join('\n'));
       return;
     }
-    if (process.env.TF2RA_CASE === 'group') {
+    if (process.env.TF2RA_CASE === 'group-paste') {
+      await page.getByRole('button', {name:'Group', exact:true}).click();
+      const dialog = page.locator('#group-dialog');
+      await dialog.getByRole('button', {name:'Join friends', exact:true}).click();
+      await dialog.getByText('Have an invitation? Paste it here', {exact:true}).click();
+      await dialog.getByLabel('Paste invitation').fill('http://127.0.0.1:8440/#join?host=https%3A%2F%2Ffriends.example\nTF2-ABCD-EFGH');
+      await dialog.getByRole('button', {name:'Use invitation', exact:true}).click();
+      assert.equal(await dialog.locator('#group-join-link').inputValue(), 'https://friends.example');
+      assert.equal(await dialog.locator('#group-code').inputValue(), 'TF2-ABCD-EFGH');
+      assert.equal(await dialog.locator('#group-member-controls').isVisible(), false);
+      await dialog.getByText('Have an invitation? Paste it here', {exact:true}).click();
+      await dialog.getByLabel('Paste invitation').fill('javascript:alert(1)');
+      await dialog.getByRole('button', {name:'Use invitation', exact:true}).click();
+      assert.match(await dialog.locator('#group-message').textContent(), /valid invitation/);
+      assert.equal(errors.length, 0, errors.join('\n'));
+      return;
+    }
+    if (['group', 'group-host'].includes(process.env.TF2RA_CASE)) {
       await page.getByRole('button', {name:'Group', exact:true}).click();
       const dialog = page.locator('#group-dialog');
       await expectVisible(dialog);
+      await dialog.getByRole('button', {name:'Invite friends', exact:true}).click();
       await dialog.getByLabel('Your display name').fill('Alice <test>');
       await dialog.getByLabel('Group name', {exact:true}).fill('Friends <test>');
       await dialog.getByRole('button', {name:'Create group', exact:true}).click();
       await expectVisible(dialog.getByRole('button', {name:'Share invite', exact:true}));
       assert.match(await dialog.innerText(), /Friends <test>/);
-      await dialog.getByRole('button', {name:'Share invite', exact:true}).click();
-      await page.waitForFunction(() => document.querySelector('#group-invitation').value.includes('TF2-'));
-      assert.match(await dialog.locator('#group-invitation').inputValue(), /TF2-/);
+      assert.equal(await dialog.locator('#group-invite').isEnabled(), false);
+      assert.equal(await dialog.locator('#group-invitation-area').isVisible(), false);
+      assert.match(await dialog.innerText(), /Start sharing/);
+      if (process.env.TF2RA_CASE === 'group-host') {
+        await dialog.getByRole('button', {name:'Start sharing', exact:true}).click();
+        await page.waitForFunction(() => !document.querySelector('#group-invite').disabled);
+        await dialog.locator('#group-invite').click();
+        await expectVisible(dialog.locator('#group-invitation-area'));
+        const invitation = await dialog.locator('#group-invitation').inputValue();
+        const link = new URL(invitation.split('\n')[0]);
+        assert.equal(link.origin, 'http://127.0.0.1:8440');
+        assert.equal(link.hash, '#join?host=https%3A%2F%2Ffriends.example');
+        assert.match(invitation, /TF2-/);
+        assert(!link.href.includes('TF2-'));
+      }
       assert.equal(await dialog.locator('script').count(), 0);
       await page.keyboard.press('Escape');
       await dialog.waitFor({state:'hidden'});
